@@ -1416,7 +1416,7 @@ class WithMatrix(
         return if (matrix.uploadApk) {
             prepareBase64File(
                 name = "Prepare signing key",
-                `if` = expr { github.isAnimekoRepository and !github.isPullRequest },
+                `if` = expr { github.isReleaseSigningRepository and !github.isPullRequest },
                 fileName = "android_signing_key",
                 fileDir = ".",
                 encodedString = expr { secrets.SIGNING_RELEASE_STOREFILE },
@@ -1547,7 +1547,7 @@ class WithMatrix(
         if (matrix.uploadApk) {
             runGradle(
                 name = "Build Android Release APKs",
-                `if` = expr { github.isAnimekoRepository and !github.isPullRequest },
+                `if` = expr { github.isReleaseSigningRepository and !github.isPullRequest },
                 tasks = arrayOf("assembleDefaultRelease"),
                 env = mapOf(
                     "signing_release_storeFileFromRoot" to expr { prepareSigningKey.outputs["filePath"] },
@@ -2026,6 +2026,9 @@ object Secrets {
 
 val GitHubContext.isAnimekoRepository
     get() = """$repository == 'open-ani/animeko'"""
+
+val GitHubContext.isReleaseSigningRepository
+    get() = """($repository == 'open-ani/animeko' || $repository == 'beiyuge/animeko')"""
 
 val GitHubContext.isPullRequest
     get() = """$event_name == 'pull_request'"""

@@ -1497,7 +1497,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ ((github.repository == ''open-ani/animeko'' || github.repository == ''beiyuge/animeko'')) && (!(github.event_name == ''pull_request'')) }}'
     - id: 'step-18'
       name: 'Prepare google-services.json'
       env:
@@ -1667,7 +1667,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew assembleDefaultRelease "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ ((github.repository == ''open-ani/animeko'' || github.repository == ''beiyuge/animeko'')) && (!(github.event_name == ''pull_request'')) }}'
     - id: 'step-38'
       name: 'Build Android Release APKs (Attempt #2)'
       env:
