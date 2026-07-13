@@ -295,3 +295,12 @@ if (!Files.isRegularFile(readyFile)) {
 }
 
 extra["anitorrentGhcrMavenRepository"] = repositoryDirectory.toFile()
+
+// Animeko still declares repositories in individual projects, so add the verified
+// repository there as well as to dependencyResolutionManagement in settings.gradle.kts.
+gradle.beforeProject {
+    repositories.maven {
+        name = "anitorrentGhcr"
+        url = repositoryDirectory.toUri()
+    }
+}
