@@ -84,6 +84,7 @@ import io.github.typesafegithub.workflows.domain.Shell
 import io.github.typesafegithub.workflows.domain.actions.Action
 import io.github.typesafegithub.workflows.domain.triggers.PullRequest
 import io.github.typesafegithub.workflows.domain.triggers.Push
+import io.github.typesafegithub.workflows.domain.triggers.WorkflowDispatch
 import io.github.typesafegithub.workflows.dsl.JobBuilder
 import io.github.typesafegithub.workflows.dsl.WorkflowBuilder
 import io.github.typesafegithub.workflows.dsl.expressions.contexts.GitHubContext
@@ -774,6 +775,7 @@ val commonIgnoredPaths = listOf(
 workflow(
     name = "Build",
     on = listOf(
+        WorkflowDispatch(),
         // Including: 
         // - pushing directly to main
         // - pushing to a branch that has an associated PR
