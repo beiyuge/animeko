@@ -97,6 +97,7 @@ jobs:
 
       - name: Test PikPak playback status UI
         if: matrix.platform == 'windows'
+        shell: bash
         run: >-
           ./gradlew :app:shared:desktopTest
           --tests '*PikPakPlaybackStatusTest*'
@@ -108,6 +109,7 @@ jobs:
 
       - name: Create Linux distributable
         if: matrix.platform == 'linux'
+        shell: bash
         run: >-
           ./gradlew createReleaseDistributable
           --no-configuration-cache
@@ -132,6 +134,7 @@ jobs:
           ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir
 
       - name: Build desktop packages
+        shell: bash
         run: >-
           ./gradlew :ci-helper:prepareArtifactsForManualUpload
           --no-configuration-cache
