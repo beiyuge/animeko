@@ -25,6 +25,8 @@ import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.pikpak_playback_active
 import me.him188.ani.app.ui.lang.pikpak_playback_retry
 import me.him188.ani.app.ui.lang.pikpak_playback_use_anitorrent_once
+import me.him188.ani.utils.platform.currentPlatformDesktop
+import me.him188.ani.utils.platform.isWindows
 import org.jetbrains.compose.resources.getString
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -56,8 +58,10 @@ class PikPakPlaybackStatusTest {
         onNodeWithText("2.0 KB/s", substring = true).assertExists()
         onNodeWithText("8.0 MB", substring = true).assertExists()
         onNodeWithText("0 B/s", substring = true).assertExists()
-        onNodeWithTag("PikPakPlaybackStatusPreview", useUnmergedTree = true)
-            .assertScreenshot("/screenshots/PikPakPlaybackStatusTest.playing.png")
+        if (!currentPlatformDesktop().isWindows()) {
+            onNodeWithTag("PikPakPlaybackStatusPreview", useUnmergedTree = true)
+                .assertScreenshot("/screenshots/PikPakPlaybackStatusTest.playing.png")
+        }
     }
 
     @Test

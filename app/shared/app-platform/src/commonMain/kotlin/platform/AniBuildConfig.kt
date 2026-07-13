@@ -49,7 +49,7 @@ interface AniBuildConfig {
  */
 val AniBuildConfig.fourDigitVersionCode: String
     get() = buildString {
-        val split = versionName.substringBefore("-").split(".")
+        val split = versionName.substringBefore("-").split(".").take(3)
         if (split.size == 3) {
             split[0].toIntOrNull()?.let {
                 append(it.toString())

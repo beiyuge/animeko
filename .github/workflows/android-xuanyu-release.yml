@@ -1,0 +1,148 @@
+name: Android Xuanyu Release
+
+on:
+  push:
+    tags:
+      - '*.*.*.xuanyu'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-xuanyu-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-android:
+    name: Build, verify, and publish Android APKs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure build
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ani.android.abis=all"
+            echo "ani.dandanplay.app.id=${{ secrets.DANDANPLAY_APP_ID }}"
+            echo "ani.dandanplay.app.secret=${{ secrets.DANDANPLAY_APP_SECRET }}"
+            echo "ani.sentry.dsn=${{ secrets.SENTRY_DSN }}"
+            echo "kotlin.native.ignoreDisabledTargets=true"
+            echo "jvm.toolchain.version=21"
+          } > local.properties
+
+      - name: Get JBR 21 for Ubuntu
+        id: jbr
+        env:
+          RUNNER_TOOL_CACHE: ${{ runner.tool_cache }}
+          JBR_URL: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz
+          JBR_CHECKSUM_URL: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz.checksum
+        run: python .github/workflows/download_jbr.py
+
+      - name: Set up JBR 21
+        uses: gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d
+        with:
+          java-version: '21'
+          distribution: jdkfile
+          jdkFile: ${{ steps.jbr.outputs.jbrLocation }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-disabled: true
+
+      - name: Validate release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fx 'version.name=5.7.1.xuanyu' gradle.properties
+          grep -Fx 'android.application.id.suffix=.xuanyu' gradle.properties
+          test "${GITHUB_REF_NAME}" = '5.7.1.xuanyu'
+
+      - name: Prepare signing key
+        id: signing
+        env:
+          BASE64_CONTENT: ${{ secrets.SIGNING_RELEASE_STOREFILE }}
+          FILE_PATH: ./android_signing_key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE64_CONTENT:-}" ]; then
+            echo "SIGNING_RELEASE_STOREFILE is empty" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$BASE64_CONTENT" | base64 --decode > "$FILE_PATH" 2>/dev/null; then
+            printf '%s' "$BASE64_CONTENT" | base64 -D > "$FILE_PATH"
+          fi
+          chmod 600 "$FILE_PATH"
+          echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release APKs
+        env:
+          signing_release_storeFileFromRoot: ${{ steps.signing.outputs.filePath }}
+          signing_release_storePassword: ${{ secrets.SIGNING_RELEASE_STOREPASSWORD }}
+          signing_release_keyAlias: ${{ secrets.SIGNING_RELEASE_KEYALIAS }}
+          signing_release_keyPassword: ${{ secrets.SIGNING_RELEASE_KEYPASSWORD }}
+        run: >-
+          ./gradlew assembleDefaultRelease
+          --stacktrace
+          -Porg.gradle.daemon.idletimeout=60000
+          -Dfile.encoding=UTF-8
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
+      - name: Verify and package APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR='app/android/build/outputs/apk/default/release'
+          RELEASE_DIR='release'
+          UNIVERSAL="$OUTPUT_DIR/android-default-universal-release.apk"
+          BUILD_TOOLS="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+
+          BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$UNIVERSAL")"
+          grep -F "package: name='me.him188.ani.xuanyu'" <<< "$BADGING"
+          grep -F "versionName='5.7.1.xuanyu'" <<< "$BADGING"
+
+          for apk in "$OUTPUT_DIR"/android-default-*-release.apk; do
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$apk"
+          done
+
+          mkdir -p "$RELEASE_DIR"
+          cp "$OUTPUT_DIR/android-default-arm64-v8a-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-arm64-v8a.apk"
+          cp "$OUTPUT_DIR/android-default-x86_64-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-x86_64.apk"
+          cp "$OUTPUT_DIR/android-default-armeabi-v7a-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-armeabi-v7a.apk"
+          cp "$UNIVERSAL" "$RELEASE_DIR/ani-5.7.1.xuanyu-universal.apk"
+          sha256sum "$RELEASE_DIR"/*.apk > "$RELEASE_DIR/SHA256SUMS"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ani-5.7.1.xuanyu-android-release
+          path: release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Animeko ${{ github.ref_name }}
+          body: |
+            Animeko Android 定制版。
+
+            - 版本：5.7.1.xuanyu
+            - 包名：me.him188.ani.xuanyu
+            - APK 已由 GitHub Actions 使用 xyla 发布证书签名并校验。
+            - `universal` 适用于大多数设备，其余文件按 CPU 架构选择。
+          files: release/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
 import me.him188.ani.app.domain.media.TestMediaList
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
@@ -24,6 +25,7 @@ import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCase
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import org.koin.core.Koin
@@ -136,6 +138,9 @@ class PlayerSessionHlsPlaybackPreparerTest {
                         }
                     }
                     single<HlsPlaybackPreparer> { preparer }
+                    single {
+                        LocalTorrentAccessPolicy(flowOf(PikPakConfig.Default), backgroundScope)
+                    }
                 },
             ),
         )

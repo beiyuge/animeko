@@ -18,12 +18,14 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
 import me.him188.ani.app.data.models.subject.SubjectSeriesInfo
 import me.him188.ani.app.data.models.subject.TestSubjectCollections
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.hls.NoopHlsPlaybackPreparer
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCase
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import org.koin.core.Koin
 import org.koin.dsl.module
 import org.openani.mediamp.test.TestMediampPlayer
@@ -83,6 +85,9 @@ class EpisodePlayerTestSuite(
                     }
                     single<HlsPlaybackPreparer> {
                         NoopHlsPlaybackPreparer
+                    }
+                    single {
+                        LocalTorrentAccessPolicy(flowOf(PikPakConfig.Default), backgroundScope)
                     }
                 },
             ),
