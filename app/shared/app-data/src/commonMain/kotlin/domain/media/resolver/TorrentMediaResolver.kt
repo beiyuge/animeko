@@ -23,6 +23,7 @@ import me.him188.ani.app.domain.media.cache.engine.withServiceRequest
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.domain.media.player.data.TorrentMediaData
 import me.him188.ani.app.domain.torrent.TorrentEngine
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.torrent.api.FetchTorrentTimeoutException
 import me.him188.ani.app.torrent.api.files.EncodedTorrentInfo
 import me.him188.ani.app.torrent.api.files.FilePriority
@@ -35,21 +36,27 @@ import me.him188.ani.datasources.api.topic.titles.parse
 import me.him188.ani.utils.coroutines.IO_
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
+import org.openani.mediamp.source.MediaExtraFiles
 import kotlin.coroutines.cancellation.CancellationException
 
 class TorrentMediaResolver(
     private val engine: TorrentEngine,
     private val engineAccess: TorrentEngineAccess,
+    private val accessPolicy: LocalTorrentAccessPolicy? = null,
 ) : MediaResolver {
     override fun supports(media: Media): Boolean {
         if (!engine.isSupported) return false
+        if (accessPolicy?.isMediaAllowed(media.mediaId) == false) return false
         return media.download is ResourceLocation.HttpTorrentFile || media.download is ResourceLocation.MagnetLink
     }
 
     @Throws(MediaResolutionException::class, CancellationException::class)
     override suspend fun resolve(media: Media, episode: EpisodeMetadata): MediaDataProvider<*> {
+        val owner = "TorrentMediaResolver#$this-resolve:${media.mediaId}"
+        val requestToken = accessPolicy?.requestToken(media.mediaId, owner) ?: owner
+        // The returned provider retains this token for the playback lifetime, so the engine remains accessible.
         @OptIn(EnsureTorrentEngineIsAccessible::class)
-        engineAccess.withServiceRequest("TorrentMediaResolver#$this-resolve:${media.mediaId}") {
+        engineAccess.withServiceRequest(requestToken) {
             val downloader = try {
                 engine.getDownloader()
             } catch (e: CancellationException) {
@@ -69,6 +76,9 @@ class TorrentMediaResolver(
                             encodedTorrentInfo = downloader.fetchTorrent(location.uri),
                             episodeMetadata = episode,
                             extraFiles = media.extraFiles.toMediampMediaExtraFiles(),
+                            requestToken = requestToken,
+                            temporaryAccessPolicy = accessPolicy,
+                            mediaId = media.mediaId,
                         )
                     } catch (e: FetchTorrentTimeoutException) {
                         throw MediaResolutionException(ResolutionFailures.FETCH_TIMEOUT)
@@ -197,8 +207,11 @@ class TorrentMediaDataProvider(
     private val engineAccess: TorrentEngineAccess,
     private val encodedTorrentInfo: EncodedTorrentInfo,
     private val episodeMetadata: EpisodeMetadata,
-    override val extraFiles: org.openani.mediamp.source.MediaExtraFiles,
-) : MediaDataProvider<TorrentMediaData>, TorrentBackedMediaDataProvider {
+    override val extraFiles: MediaExtraFiles,
+    private val requestToken: Any? = null,
+    private val temporaryAccessPolicy: LocalTorrentAccessPolicy? = null,
+    private val mediaId: String? = null,
+) : MediaDataProvider<TorrentMediaData>, TorrentBackedMediaDataProvider, ManagedMediaDataProvider {
     @OptIn(ExperimentalStdlibApi::class)
     val uri: String by lazy {
         "torrent://${encodedTorrentInfo.data.toHexString().take(32) + "..."}"
@@ -212,7 +225,8 @@ class TorrentMediaDataProvider(
             "TorrentVideoSource '${episodeMetadata.title}' opening a VideoData"
         }
 
-        val requestToken = "TorrentMediaDataProvider#$this-open:${encodedTorrentInfo.data}"
+        val requestToken = requestToken
+            ?: "TorrentMediaDataProvider#$this-open:${encodedTorrentInfo.data}"
         // 使用 MediaDataProvider.open 通常是在播放临时 BT 源, 在下面的 onClose 里再释放.
         // 也就是说进入从开启这个 MediaData 开始, 到下面 onClose 释放期间, 需要始终保持 BT 服务可用.
         @OptIn(UnsafeTorrentEngineAccessApi::class)
@@ -251,6 +265,7 @@ class TorrentMediaDataProvider(
             // 如果上面发生了异常或被取消, 下面的 onClose 就永远不会被调用, 需要手动释放.
             @OptIn(UnsafeTorrentEngineAccessApi::class)
             engineAccess.requestService(requestToken, false)
+            if (mediaId != null) temporaryAccessPolicy?.revokeTemporaryAccess(mediaId)
 
             throw ex // just re-throw it
         }
@@ -268,6 +283,7 @@ class TorrentMediaDataProvider(
                         // 对应了上面的 requestUseEngine(true)
                         @OptIn(UnsafeTorrentEngineAccessApi::class)
                         engineAccess.requestService(requestToken, false)
+                        if (mediaId != null) temporaryAccessPolicy?.revokeTemporaryAccess(mediaId)
                     }
                 }
             },
@@ -275,6 +291,10 @@ class TorrentMediaDataProvider(
     }
 
     override fun toString(): String = "TorrentVideoSource(uri=$uri, episodeMetadata=${episodeMetadata})"
+
+    override fun closeProvider() {
+        if (mediaId != null) temporaryAccessPolicy?.revokeTemporaryAccess(mediaId)
+    }
 
     companion object {
         private val logger = logger<TorrentMediaDataProvider>()

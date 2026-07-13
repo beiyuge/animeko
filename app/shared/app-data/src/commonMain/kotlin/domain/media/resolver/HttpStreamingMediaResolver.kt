@@ -42,3 +42,53 @@ class HttpStreamingMediaDataProvider(
     override fun toString(): String = "HttpStreamingVideoSource(uri='$uri')"
 }
 
+interface PikPakBackedMediaDataProvider {
+    val pikPakMediaId: String
+}
+
+class PikPakStreamingMediaDataProvider(
+    val uri: String,
+    val originalTitle: String,
+    private val headers: Map<String, String> = emptyMap(),
+    override val extraFiles: MediaExtraFiles = MediaExtraFiles.EMPTY,
+    val mediaId: String,
+    private val playbackCoordinator: PikPakPlaybackCoordinator? = null,
+) : MediaDataProvider<UriMediaData>, PikPakBackedMediaDataProvider, ManagedMediaDataProvider {
+    override val pikPakMediaId: String get() = mediaId
+    private var transportSession: PikPakPlaybackTransportSession? = null
+
+    override suspend fun open(scopeForCleanup: CoroutineScope): UriMediaData {
+        val coordinator = playbackCoordinator
+        if (coordinator == null) return UriMediaData(uri, headers, extraFiles)
+        transportSession?.close()
+        return createPikPakPlaybackTransportSession(
+            uri = uri,
+            headers = headers,
+            extraFiles = extraFiles,
+            onTraffic = { speed, total -> coordinator.updateTraffic(mediaId, speed, total) },
+        ).also { transportSession = it }.mediaData
+    }
+
+    override fun closeProvider() {
+        transportSession?.close()
+        transportSession = null
+        playbackCoordinator?.reset(mediaId)
+    }
+
+    override fun toString(): String = "PikPakStreamingVideoSource(mediaId='$mediaId')"
+}
+
+interface ManagedMediaDataProvider {
+    fun closeProvider()
+}
+
+interface PikPakPlaybackTransportSession : AutoCloseable {
+    val mediaData: UriMediaData
+}
+
+internal expect fun createPikPakPlaybackTransportSession(
+    uri: String,
+    headers: Map<String, String>,
+    extraFiles: MediaExtraFiles,
+    onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
+): PikPakPlaybackTransportSession

@@ -17,6 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -112,6 +113,7 @@ import me.him188.ani.app.domain.media.cache.storage.MediaSaveDirProvider
 import me.him188.ani.app.domain.media.cache.storage.TorrentMediaCacheStorage
 import me.him188.ani.app.domain.media.fetch.MediaSourceManager
 import me.him188.ani.app.domain.media.fetch.MediaSourceManagerImpl
+import me.him188.ani.app.domain.media.resolver.PikPakPlaybackCoordinator
 import me.him188.ani.app.domain.mediasource.codec.MediaSourceCodecManager
 import me.him188.ani.app.domain.mediasource.subscription.MediaSourceSubscriptionRequesterImpl
 import me.him188.ani.app.domain.mediasource.subscription.MediaSourceSubscriptionUpdater
@@ -121,6 +123,7 @@ import me.him188.ani.app.domain.session.SessionStateProvider
 import me.him188.ani.app.domain.settings.ProxyProvider
 import me.him188.ani.app.domain.settings.SettingsBasedProxyProvider
 import me.him188.ani.app.domain.torrent.TorrentManager
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.domain.update.UpdateManager
 import me.him188.ani.app.domain.usecase.useCaseModules
 import me.him188.ani.app.ui.subject.details.state.DefaultSubjectDetailsStateFactory
@@ -152,6 +155,8 @@ fun KoinApplication.getCommonKoinModule(getContext: () -> Context, coroutineScop
 private fun KoinApplication.otherModules(getContext: () -> Context, coroutineScope: CoroutineScope) = module {
     // Repositories
     single<ProxyProvider> { SettingsBasedProxyProvider(get(), coroutineScope) }
+    single { LocalTorrentAccessPolicy(get<SettingsRepository>(), coroutineScope) }
+    single { PikPakPlaybackCoordinator(get()) }
     single<SessionManager> {
         SessionManager(
             tokenRepository = get(),
@@ -416,7 +421,7 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
         val engines = get<TorrentManager>().engines
         val metadataStore = getContext().dataStores.mediaCacheMetadataStore
 
-        MediaCacheManagerImpl(
+        val manager = MediaCacheManagerImpl(
             storagesIncludingDisabled = buildList(capacity = engines.size) {
                 /*if (currentAniBuildConfig.isDebug) {
                     // 注意, 这个必须要在第一个, 见 [DefaultTorrentManager.engines] 注释
@@ -449,6 +454,8 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
                             parentCoroutineContext = coroutineScope.childScopeContext(),
                             shareRatioLimitFlow = settingsRepository.anitorrentConfig.flow
                                 .map { it.shareRatioLimit },
+                            uploadEnabledFlow = settingsRepository.anitorrentConfig.flow
+                                .map { it.uploadEnabled },
                         ),
                     )
                 }
@@ -466,6 +473,21 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
             },
             backgroundScope = coroutineScope.childScope(),
         )
+        coroutineScope.launch {
+            get<LocalTorrentAccessPolicy>().isBlocked.collect { blocked ->
+                if (!blocked) return@collect
+                // Persisted entries remain intact, but every unfinished local
+                // torrent is paused before the service/desktop access is released.
+                for (storage in manager.storagesIncludingDisabled) {
+                    for (cache in storage.listFlow.first()) {
+                        if (cache is TorrentMediaCacheEngine.TorrentMediaCache) {
+                            cache.pause()
+                        }
+                    }
+                }
+            }
+        }
+        manager
     }
 
 

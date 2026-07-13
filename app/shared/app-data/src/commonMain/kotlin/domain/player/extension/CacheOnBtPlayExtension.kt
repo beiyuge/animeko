@@ -19,6 +19,7 @@ import me.him188.ani.app.domain.media.cache.MediaCacheManager
 import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.resolver.toEpisodeMetadata
 import me.him188.ani.app.domain.player.VideoLoadingState
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.MediaCacheMetadata
 import me.him188.ani.utils.logging.info
@@ -43,6 +44,7 @@ class CacheOnBtPlayExtension(
 ) : PlayerExtension("CacheOnBtPlay") {
     private val mediaCacheManager: MediaCacheManager by koin.inject()
     private val deleteCacheUseCase: DeleteCacheUseCase by koin.inject()
+    private val torrentAccessPolicy: LocalTorrentAccessPolicy by koin.inject()
 
     private var currentCache: MediaCache? = null
 
@@ -58,6 +60,7 @@ class CacheOnBtPlayExtension(
                         deleteCurrentAutoSelectedIfNotStarted()
 
                         if (state !is VideoLoadingState.Succeed || !state.isBt) return@collectLatest
+                        if (torrentAccessPolicy.isBlocked.value) return@collectLatest
 
                         val storage = mediaCacheManager.storagesIncludingDisabled
                             .find { it.engine.engineKey == MediaCacheEngineKey.Anitorrent }

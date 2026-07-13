@@ -10,6 +10,7 @@
 package me.him188.ani.app.domain.episode
 
 import me.him188.ani.app.data.network.SubjectService
+import me.him188.ani.app.data.network.isInternalSubjectRecommendation
 import me.him188.ani.app.domain.usecase.UseCase
 import me.him188.ani.utils.platform.Uuid
 
@@ -32,16 +33,18 @@ fun interface GetSubjectRecommendationUseCase : UseCase {
 
 class GetSubjectRecommendationUseCaseImpl(private val service: SubjectService) : GetSubjectRecommendationUseCase {
     override suspend fun invoke(subjectId: Int): List<SubjectRecommendation> {
-        return service.getSubjectRecommendations(subjectId, 15).map {
-            SubjectRecommendation(
-                subjectId = it.subjectId,
-                name = it.subjectName,
-                nameCn = it.subjectNameCn,
-                desc1 = it.desc1,
-                desc2 = it.desc2,
-                imageUrl = it.imageUrl,
-                uri = it.uri,
-            )
-        }
+        return service.getSubjectRecommendations(subjectId, 15)
+            .filter { it.isInternalSubjectRecommendation() }
+            .map {
+                SubjectRecommendation(
+                    subjectId = it.subjectId,
+                    name = it.subjectName,
+                    nameCn = it.subjectNameCn,
+                    desc1 = it.desc1,
+                    desc2 = it.desc2,
+                    imageUrl = it.imageUrl,
+                    uri = it.uri,
+                )
+            }
     }
 }

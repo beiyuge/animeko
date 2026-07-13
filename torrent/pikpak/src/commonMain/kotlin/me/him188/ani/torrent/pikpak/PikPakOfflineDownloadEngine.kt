@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
@@ -41,6 +42,7 @@ import kotlinx.io.bytestring.encodeToByteString
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
+import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import me.him188.ani.torrent.offline.ResolvedMedia
 import me.him188.ani.utils.io.DigestAlgorithm
 import me.him188.ani.utils.io.digest
@@ -116,6 +118,9 @@ class PikPakOfflineDownloadEngine(
         .map { it != null && it.isValid }
         .stateIn(scope, SharingStarted.Eagerly, initialValue = credentials.value?.isValid == true)
 
+    private val _resolutionProgress = MutableStateFlow<OfflineDownloadProgress>(OfflineDownloadProgress.Idle)
+    override val resolutionProgress: StateFlow<OfflineDownloadProgress> = _resolutionProgress
+
     // Borrow the underlying HttpClient for the lifetime of this engine. The
     // SDK needs a stable HttpClient to hand to its OkHttp/Darwin engine, and
     // ScopedHttpClient's borrowForever() is the documented escape hatch for
@@ -170,6 +175,7 @@ class PikPakOfflineDownloadEngine(
             // rely on the caller having populated one. The init-block pre-warm
             // is async and may not have finished by the time a user hits play,
             // so explicitly await login here. Cheap when already authed.
+            _resolutionProgress.value = OfflineDownloadProgress.Authenticating
             client.login()
 
             // Single-slot design:
@@ -188,6 +194,7 @@ class PikPakOfflineDownloadEngine(
             //     of every "VLC is unable to open MRL" we hit).
             //   * Season-pack siblings don't linger; the old pack folder is
             //     cascade-deleted before the new task is submitted.
+            _resolutionProgress.value = OfflineDownloadProgress.PreparingStorage
             val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
 
             // Per-source sub-folder: every magnet / .torrent URL gets its own
@@ -240,6 +247,7 @@ class PikPakOfflineDownloadEngine(
             var failureCleanupId: String? = null
 
             try {
+                _resolutionProgress.value = OfflineDownloadProgress.Submitting
                 logger.info { "[pikpak] submit offline task for ${uri.take(60)}... bucket=$sourceKey" }
                 val fileId = when (val result = client.createUrlFile(parentId = bucketId, url = uri)) {
                     is CreateUrlResult.Queued -> {
@@ -248,7 +256,10 @@ class PikPakOfflineDownloadEngine(
                             "[pikpak] submitted task id=${task.id} file_id=${task.fileId} file_name=${task.fileName}"
                         }
                         if (task.fileId.isNotEmpty()) failureCleanupId = task.fileId
-                        awaitCompletion(client, task.id, task.fileId) { observed ->
+                        _resolutionProgress.value = OfflineDownloadProgress.Waiting
+                        awaitCompletion(client, task.id, task.fileId, onProgress = {
+                            _resolutionProgress.value = OfflineDownloadProgress.Downloading(it)
+                        }) { observed ->
                             failureCleanupId = observed
                         }
                     }
@@ -270,6 +281,7 @@ class PikPakOfflineDownloadEngine(
                 }
                 failureCleanupId = fileId
 
+                _resolutionProgress.value = OfflineDownloadProgress.SelectingFile
                 val rootInfo = client.getFile(fileId)
                 if (rootInfo.id.isNotEmpty()) failureCleanupId = rootInfo.id
 
@@ -297,7 +309,10 @@ class PikPakOfflineDownloadEngine(
                     rootInfo
                 }
 
-                buildResolvedMedia(videoFile)
+                _resolutionProgress.value = OfflineDownloadProgress.ResolvingStreamUrl
+                buildResolvedMedia(videoFile).also {
+                    _resolutionProgress.value = OfflineDownloadProgress.Ready
+                }
                 // No cleanup on success; next resolve drains the slot.
             } catch (e: Throwable) {
                 // Failure path: best-effort cleanup inside the slot so a
@@ -366,6 +381,7 @@ class PikPakOfflineDownloadEngine(
         client: PikPakClient,
         taskId: String,
         initialFileId: String,
+        onProgress: (Float?) -> Unit = {},
         onFileIdObserved: (String) -> Unit = {},
     ): String {
         var fileId = initialFileId
@@ -391,6 +407,7 @@ class PikPakOfflineDownloadEngine(
                 fileId = match.fileId
                 onFileIdObserved(fileId)
             }
+            onProgress(match.progress.toProgressFraction())
             if (match.phase == "PHASE_TYPE_ERROR") {
                 throw OfflineDownloadRejectedException(
                     "PikPak task failed: phase=${match.phase} message=${match.message}",
@@ -402,6 +419,11 @@ class PikPakOfflineDownloadEngine(
         }
     }
 
+}
+
+private fun Any?.toProgressFraction(): Float? {
+    val raw = toString().trim().removeSuffix("%").toFloatOrNull() ?: return null
+    return (if (raw > 1f) raw / 100f else raw).coerceIn(0f, 1f)
 }
 
 /**

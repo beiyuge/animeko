@@ -97,6 +97,7 @@ class AnitorrentEngine(
             peerFingerprint = computeTorrentFingerprint(),
             userAgent = computeTorrentUserAgent(),
             handshakeClientVersion = "Anitorrent ${currentAniBuildConfig.fourDigitVersionCode}",
+            uploadEnabled = uploadEnabled,
             downloadRateLimitBytes = downloadRateLimit.toLibtorrentRate(),
             uploadRateLimitBytes = uploadRateLimit.toLibtorrentRate(),
             shareRatioLimit = shareRatioLimit.toLibtorrentShareRatio(),

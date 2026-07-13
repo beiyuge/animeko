@@ -48,6 +48,11 @@ import me.him188.ani.utils.io.tryReveal
 @Serializable
 data class PikPakConfig(
     val enabled: Boolean = false,
+    /**
+     * Prevents the local Anitorrent service/engine from starting while PikPak
+     * is enabled. A playback-scoped override may temporarily bypass this.
+     */
+    val preventAnitorrentStart: Boolean = false,
     val username: String = "",
     @Serializable(with = ObscuredStringSerializer::class)
     val password: String = "",
@@ -62,7 +67,7 @@ data class PikPakConfig(
     val slotQueueLength: Int = 1,
 ) {
     override fun toString(): String {
-        return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
+        return "PikPakConfig(enabled=$enabled, preventAnitorrentStart=$preventAnitorrentStart, username=$username, password.hash=${password.hashCode()}, " +
                 "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
                 "slotQueueLength=$slotQueueLength)"
     }

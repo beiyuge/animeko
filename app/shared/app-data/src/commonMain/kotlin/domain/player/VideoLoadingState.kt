@@ -41,6 +41,7 @@ sealed interface VideoLoadingState {
      */
     data class Succeed(
         val isBt: Boolean,
+        val backend: PlaybackBackend = if (isBt) PlaybackBackend.LocalTorrent else PlaybackBackend.Http,
     ) : VideoLoadingState, Progressing
 
     sealed class Failed : VideoLoadingState
@@ -56,4 +57,10 @@ sealed interface VideoLoadingState {
     data class UnknownError(
         val cause: Throwable,
     ) : Failed()
+}
+
+enum class PlaybackBackend {
+    Http,
+    LocalTorrent,
+    PikPak,
 }

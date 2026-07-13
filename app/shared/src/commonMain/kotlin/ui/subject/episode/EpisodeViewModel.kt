@@ -83,6 +83,7 @@ import me.him188.ani.app.domain.episode.mediaSelectorFlow
 import me.him188.ani.app.domain.foundation.LoadError
 import me.him188.ani.app.domain.media.cache.EpisodeCacheStatus
 import me.him188.ani.app.domain.media.cache.MediaCacheManager
+import me.him188.ani.app.domain.media.resolver.PikPakPlaybackCoordinator
 import me.him188.ani.app.domain.media.fetch.MediaSourceManager
 import me.him188.ani.app.domain.media.fetch.MediaSourceResultsFilterer
 import me.him188.ani.app.domain.media.resolver.MediaResolver
@@ -267,6 +268,7 @@ class EpisodeViewModel(
     private val setSubjectCollectionTypeOrDeleteUseCase: SetSubjectCollectionTypeOrDeleteUseCase by inject()
     private val getPreferredWebMediaSource: GetPreferredWebMediaSourceUseCase by inject()
     private val webCaptchaCoordinator: WebCaptchaCoordinator by inject()
+    private val pikPakPlaybackCoordinator: PikPakPlaybackCoordinator by inject()
     // endregion
 
     private val tasker = SingleTaskExecutor(backgroundScope.coroutineContext)
@@ -368,6 +370,7 @@ class EpisodeViewModel(
         player,
         mediaSourceInfoProvider,
         mediaSourceLoading = fetchPlayState.episodeSessionFlow.flatMapLatest { it.mediaSourceLoadingFlow },
+        pikPakPlaybackState = pikPakPlaybackCoordinator.state,
         backgroundScope,
     ).videoStatisticsFlow
 
@@ -965,6 +968,15 @@ class EpisodeViewModel(
                 ?.find { it.instanceId == instanceId }
                 ?.restart()
         }
+    }
+
+    fun retryPikPakPlayback() {
+        fetchPlayState.restartLoad()
+    }
+
+    fun useAnitorrentForCurrentPlayback(mediaId: String) {
+        pikPakPlaybackCoordinator.requestLocalFallback(mediaId)
+        fetchPlayState.restartLoad()
     }
 
     fun onUIReady() {

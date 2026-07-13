@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.launch
@@ -41,6 +42,7 @@ class TorrentMediaCacheStorage(
     private val store: DataStore<List<MediaCacheSave>>,
     private val torrentEngine: TorrentMediaCacheEngine,
     private val shareRatioLimitFlow: Flow<Float>,
+    private val uploadEnabledFlow: Flow<Boolean> = flowOf(true),
     private val displayName: String,
     parentCoroutineContext: CoroutineContext = EmptyCoroutineContext,
 ) : AbstractDataStoreMediaCacheStorage(mediaSourceId, store, torrentEngine, displayName, parentCoroutineContext) {
@@ -107,7 +109,7 @@ class TorrentMediaCacheStorage(
                 is TorrentMediaCacheEngine.TorrentMediaCache -> {
                     logger.info { "Cache resumed: $cache, subscribe to media cache stats." }
                     statSubscriptionScope.launch {
-                        cache.subscribeStats(shareRatioLimitFlow)
+                        cache.subscribeStats(shareRatioLimitFlow, uploadEnabledFlow)
                     }
                 }
 
@@ -134,7 +136,7 @@ class TorrentMediaCacheStorage(
             check(cache is TorrentMediaCacheEngine.TorrentMediaCache) { "Cache does not implement TorrentMediaCache." }
 
             statSubscriptionScope.launch {
-                cache.subscribeStats(shareRatioLimitFlow)
+                cache.subscribeStats(shareRatioLimitFlow, uploadEnabledFlow)
             }
 
             cache

@@ -552,6 +552,8 @@ private fun EpisodeScreenTabletVeryWide(
                                     onRetryLoad = {
                                         page.loadError?.let { vm.retryLoad(it) }
                                     },
+                                    onRetryPikPak = vm::retryPikPakPlayback,
+                                    onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
                                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                                 )
                             }
@@ -720,6 +722,8 @@ private fun EpisodeScreenContentPhone(
                     onRetryLoad = {
                         page.loadError?.let { vm.retryLoad(it) }
                     },
+                    onRetryPikPak = vm::retryPikPakPlayback,
+                    onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
                     modifier = Modifier.fillMaxSize(),
                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                 )

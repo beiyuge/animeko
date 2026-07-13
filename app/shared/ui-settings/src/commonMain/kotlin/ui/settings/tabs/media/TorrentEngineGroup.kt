@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowOutward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,6 +31,8 @@ import me.him188.ani.app.navigation.LocalNavigator
 import me.him188.ani.app.ui.foundation.LocalPlatform
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.settings_media_torrent_download_rate_limit
+import me.him188.ani.app.ui.lang.settings_media_torrent_allow_upload
+import me.him188.ani.app.ui.lang.settings_media_torrent_allow_upload_disabled_description
 import me.him188.ani.app.ui.lang.settings_media_torrent_limit_upload_on_metered
 import me.him188.ani.app.ui.lang.settings_media_torrent_limit_upload_on_metered_description
 import me.him188.ani.app.ui.lang.settings_media_torrent_peer_filter
@@ -73,6 +76,21 @@ internal fun SettingsScope.TorrentEngineGroup(
             description = { Text(stringResource(Lang.settings_media_torrent_sharing_description)) },
             useThinHeader = true,
         ) {
+            SwitchItem(
+                checked = torrentSettings.uploadEnabled,
+                onCheckedChange = {
+                    torrentSettingsState.update(torrentSettings.copy(uploadEnabled = it))
+                },
+                title = { Text(stringResource(Lang.settings_media_torrent_allow_upload)) },
+                description = if (torrentSettings.uploadEnabled) null else {
+                    {
+                        Text(
+                            stringResource(Lang.settings_media_torrent_allow_upload_disabled_description),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+            )
 //            val allowUpload by remember {
 //                derivedStateOf {
 //                    torrentSettings.uploadRateLimit != FileSize.Zero
@@ -107,42 +125,44 @@ internal fun SettingsScope.TorrentEngineGroup(
 //                onValueChangeCompleted = { vm.torrentSettings.update(torrentSettings.copy(uploadRateLimit = it)) },
 //            )
 
-            RateSliderItem(
-                torrentSettings.uploadRateLimit,
-                onValueChangeFinished = {
-                    torrentSettingsState.update(torrentSettings.copy(uploadRateLimit = it))
-                },
-                title = { Text(stringResource(Lang.settings_media_torrent_upload_rate_limit)) },
-            )
-            var shareRatioLimit by remember {
-                mutableStateOf(torrentSettings.shareRatioLimit)
-            }
-            SliderItem(
-                shareRatioLimit,
-                onValueChange = { shareRatioLimit = it },
-                valueRange = 1f..10f,
-                onValueChangeFinished = {
-                    torrentSettingsState.update(torrentSettings.copy(shareRatioLimit = shareRatioLimit))
-                },
-                title = { Text(stringResource(Lang.settings_media_torrent_share_ratio_limit)) },
-                description = { Text(stringResource(Lang.settings_media_torrent_share_ratio_description)) },
-                valueLabel = {
-                    Text(
-                        if (shareRatioLimit == SHARE_RATIO_LIMIT_INFINITE) {
-                            stringResource(Lang.settings_media_torrent_unlimited)
-                        } else {
-                            String.format1f(shareRatioLimit)
-                        },
-                    )
-                },
-            )
-            if (LocalPlatform.current.supportsLimitUploadOnMeteredNetwork()) {
-                SwitchItem(
-                    checked = torrentSettings.limitUploadOnMeteredNetwork,
-                    onCheckedChange = { torrentSettingsState.update(torrentSettings.copy(limitUploadOnMeteredNetwork = it)) },
-                    title = { Text(stringResource(Lang.settings_media_torrent_limit_upload_on_metered)) },
-                    description = { Text(stringResource(Lang.settings_media_torrent_limit_upload_on_metered_description)) },
+            if (torrentSettings.uploadEnabled) {
+                RateSliderItem(
+                    torrentSettings.uploadRateLimit,
+                    onValueChangeFinished = {
+                        torrentSettingsState.update(torrentSettings.copy(uploadRateLimit = it))
+                    },
+                    title = { Text(stringResource(Lang.settings_media_torrent_upload_rate_limit)) },
                 )
+                var shareRatioLimit by remember {
+                    mutableStateOf(torrentSettings.shareRatioLimit)
+                }
+                SliderItem(
+                    shareRatioLimit,
+                    onValueChange = { shareRatioLimit = it },
+                    valueRange = 1f..10f,
+                    onValueChangeFinished = {
+                        torrentSettingsState.update(torrentSettings.copy(shareRatioLimit = shareRatioLimit))
+                    },
+                    title = { Text(stringResource(Lang.settings_media_torrent_share_ratio_limit)) },
+                    description = { Text(stringResource(Lang.settings_media_torrent_share_ratio_description)) },
+                    valueLabel = {
+                        Text(
+                            if (shareRatioLimit == SHARE_RATIO_LIMIT_INFINITE) {
+                                stringResource(Lang.settings_media_torrent_unlimited)
+                            } else {
+                                String.format1f(shareRatioLimit)
+                            },
+                        )
+                    },
+                )
+                if (LocalPlatform.current.supportsLimitUploadOnMeteredNetwork()) {
+                    SwitchItem(
+                        checked = torrentSettings.limitUploadOnMeteredNetwork,
+                        onCheckedChange = { torrentSettingsState.update(torrentSettings.copy(limitUploadOnMeteredNetwork = it)) },
+                        title = { Text(stringResource(Lang.settings_media_torrent_limit_upload_on_metered)) },
+                        description = { Text(stringResource(Lang.settings_media_torrent_limit_upload_on_metered_description)) },
+                    )
+                }
             }
         }
         val navigator by rememberUpdatedState(LocalNavigator.current)

@@ -29,15 +29,20 @@ pluginManagement {
     }
 }
 
+apply(from = "gradle/anitorrent-ghcr.settings.gradle.kts")
+
 dependencyResolutionManagement {
     @Suppress("UnstableApiUsage")
     repositories {
+        maven {
+            url = uri(extra["anitorrentGhcrMavenRepository"]!!)
+        }
         mavenLocal()
         mavenCentral()
     }
     versionCatalogs {
         create("anitorrentLibs") {
-            from("org.openani.anitorrent:catalog:0.2.0")
+            from("io.github.beiyuge.anitorrent:catalog:0.2.1-beiyuge.1")
         }
 
         create("mediampLibs") {
@@ -206,9 +211,9 @@ findLocalProperty("ani.build.anitorrent.path")?.let { anitorrentPath ->
     println("i:: Including anitorrent as a Composite Build from: $anitorrentPath")
     includeBuild(anitorrentPath) {
         dependencySubstitution {
-            substitute(module("org.openani.anitorrent:anitorrent-native"))
+            substitute(module("io.github.beiyuge.anitorrent:anitorrent-native"))
                 .using(project(":anitorrent-native"))
-            substitute(module("org.openani.anitorrent:anitorrent-native-desktop-jni"))
+            substitute(module("io.github.beiyuge.anitorrent:anitorrent-native-desktop-jni"))
                 .using(project(":anitorrent-native-desktop-jni"))
         }
     }

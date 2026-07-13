@@ -217,6 +217,9 @@ fun ExplorationScreen(
 
         val recommendationPager = state.recommendationPager.collectAsLazyPagingItemsWithLifecycle()
         val recommendationPagerLoadError by recommendationPager.rememberLoadErrorState()
+        val showRecommendationSection = recommendationPager.itemCount > 0 ||
+                recommendationPager.isLoadingFirstPageOrRefreshing ||
+                recommendationPagerLoadError != null
         val aniMotionScheme = LocalAniMotionScheme.current
         val layoutParams = RecommendationDefaults.layoutParameters()
         LazyVerticalGrid(
@@ -344,31 +347,35 @@ fun ExplorationScreen(
                         )
                     }
 
-                    NavTitleHeader(
-                        title = { Text(stringResource(Lang.exploration_recommendations), softWrap = false) },
-                    )
+                    if (showRecommendationSection) {
+                        NavTitleHeader(
+                            title = { Text(stringResource(Lang.exploration_recommendations), softWrap = false) },
+                        )
+                    }
                 }
             }
 
-            recommendationItems(
-                recommendationPager,
-                loadError = recommendationPagerLoadError,
-                onClick = { info ->
-                    when (info) {
-                        is RecommendedSubjectInfo -> {
-                            Analytics.recordEvent(SubjectEnter) {
-                                put("source", "home_recommendation")
-                                put("subject_id", info.bangumiId)
+            if (showRecommendationSection) {
+                recommendationItems(
+                    recommendationPager,
+                    loadError = recommendationPagerLoadError,
+                    onClick = { info ->
+                        when (info) {
+                            is RecommendedSubjectInfo -> {
+                                Analytics.recordEvent(SubjectEnter) {
+                                    put("source", "home_recommendation")
+                                    put("subject_id", info.bangumiId)
+                                }
+                                navigator.navigateSubjectDetails(
+                                    subjectId = info.bangumiId,
+                                    placeholder = info.toNavPlaceholder(),
+                                )
                             }
-                            navigator.navigateSubjectDetails(
-                                subjectId = info.bangumiId,
-                                placeholder = info.toNavPlaceholder(),
-                            )
                         }
-                    }
-                },
-                layoutParams,
-            )
+                    },
+                    layoutParams,
+                )
+            }
         }
     }
 }

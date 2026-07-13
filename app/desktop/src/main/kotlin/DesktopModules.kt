@@ -25,7 +25,7 @@ import me.him188.ani.app.domain.foundation.HttpClientProvider
 import me.him188.ani.app.domain.foundation.ScopedHttpClientUserAgent
 import me.him188.ani.app.domain.foundation.get
 import me.him188.ani.app.domain.media.cache.MediaCacheManager
-import me.him188.ani.app.domain.media.cache.engine.AlwaysUseTorrentEngineAccess
+import me.him188.ani.app.domain.media.cache.engine.PolicyAwareTorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.HttpMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.engine.TorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.storage.MediaSaveDirProvider
@@ -42,6 +42,7 @@ import me.him188.ani.app.domain.mediasource.web.DesktopWebCaptchaCoordinator
 import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
 import me.him188.ani.app.domain.torrent.TorrentManager
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.navigation.BrowserNavigator
 import me.him188.ani.app.navigation.DesktopBrowserNavigator
 import me.him188.ani.app.platform.AppTerminator
@@ -75,7 +76,7 @@ import java.io.File
 import kotlin.io.path.Path
 
 fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) = module {
-    single<TorrentEngineAccess> { AlwaysUseTorrentEngineAccess }
+    single<TorrentEngineAccess> { PolicyAwareTorrentEngineAccess(get<LocalTorrentAccessPolicy>(), scope) }
 
     single<MediaSaveDirProvider> {
         val settings = get<SettingsRepository>().mediaCacheSettings
@@ -186,14 +187,23 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
         )
     }
     factory<MediaResolver> {
-        val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
+        val torrentResolvers = get<TorrentManager>().engines.map {
+            TorrentMediaResolver(it, get(), get<LocalTorrentAccessPolicy>())
+        }
         // Hand PikPak the local-BT resolvers as its fallback so a failing
         // PikPak (auth/network/limit) doesn't lock the user out of BT
         // playback. The fallback is still listed in the chain below for the
         // PikPak-disabled case.
         val btFallback = MediaResolver.from(torrentResolvers)
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
+            listOf<MediaResolver>(
+                OfflineDownloadMediaResolver(
+                    get(),
+                    fallback = btFallback,
+                    playbackCoordinator = get(),
+                    torrentAccessPolicy = get(),
+                ),
+            )
                 .plus(torrentResolvers)
                 .plus(LocalFileMediaResolver())
                 .plus(HttpStreamingMediaResolver())

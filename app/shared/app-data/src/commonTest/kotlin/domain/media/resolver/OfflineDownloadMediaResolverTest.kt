@@ -10,14 +10,19 @@
 package me.him188.ani.app.domain.media.resolver
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.io.IOException
 import me.him188.ani.app.domain.media.createTestDefaultMedia
 import me.him188.ani.app.domain.media.createTestMediaProperties
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
+import me.him188.ani.app.data.models.preference.PikPakConfig
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.MediaExtraFiles
@@ -106,14 +111,14 @@ class OfflineDownloadMediaResolverTest {
     }
 
     @Test
-    fun `resolve - returns HttpStreamingMediaDataProvider on engine success`() = runTest {
+    fun `resolve - returns PikPak marked streaming provider on engine success`() = runTest {
         val engine = FakeEngine(
             isSupported = true,
             resolveResult = ResolvedMedia(streamUrl = "https://cdn.example/signed.mp4"),
         )
         val resolver = OfflineDownloadMediaResolver(engine)
         val provider = resolver.resolve(magnetMedia, episode)
-        val opened = assertIs<HttpStreamingMediaDataProvider>(provider)
+        val opened = assertIs<PikPakStreamingMediaDataProvider>(provider)
             .open(kotlinx.coroutines.CoroutineScope(kotlin.coroutines.EmptyCoroutineContext))
         assertEquals("https://cdn.example/signed.mp4", opened.uri)
     }
@@ -129,6 +134,32 @@ class OfflineDownloadMediaResolverTest {
         val provider = resolver.resolve(magnetMedia, episode)
         assertSame(fallback.sentinel, provider)
         assertEquals(1, fallback.resolveCallCount)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `resolve - persistent PikPak block forbids automatic local fallback`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            resolveThrows = OfflineDownloadAuthException("wrong password"),
+        )
+        val fallback = RecordingFallback(supports = true)
+        val policy = LocalTorrentAccessPolicy(
+            MutableStateFlow(PikPakConfig.Default.copy(enabled = true, preventAnitorrentStart = true)),
+            CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+        )
+        val coordinator = PikPakPlaybackCoordinator(policy)
+        val resolver = OfflineDownloadMediaResolver(
+            engine,
+            fallback = fallback,
+            playbackCoordinator = coordinator,
+            torrentAccessPolicy = policy,
+        )
+
+        assertFailsWith<MediaResolutionException> { resolver.resolve(magnetMedia, episode) }
+        assertEquals(0, fallback.resolveCallCount)
+        assertEquals(1, coordinator.state.value.failureCount)
+        assertIs<PikPakPlaybackState.Status.Failed>(coordinator.state.value.status)
     }
 
     @Test
@@ -189,6 +220,7 @@ class OfflineDownloadMediaResolverTest {
         assertEquals(1, fallback.resolveCallCount)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `resolve - CancellationException propagates without hitting fallback`() = runTest {
         // A caller cancel should never be swallowed by the fallback path; if
@@ -200,11 +232,23 @@ class OfflineDownloadMediaResolverTest {
             resolveThrows = CancellationException("user cancelled"),
         )
         val fallback = RecordingFallback(supports = true)
-        val resolver = OfflineDownloadMediaResolver(engine, fallback = fallback)
+        val policy = LocalTorrentAccessPolicy(
+            MutableStateFlow(PikPakConfig.Default),
+            CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+        )
+        val coordinator = PikPakPlaybackCoordinator(policy)
+        val resolver = OfflineDownloadMediaResolver(
+            engine,
+            fallback = fallback,
+            playbackCoordinator = coordinator,
+            torrentAccessPolicy = policy,
+        )
         assertFailsWith<CancellationException> {
             resolver.resolve(magnetMedia, episode)
         }
         assertEquals(0, fallback.resolveCallCount)
+        assertNull(coordinator.state.value.mediaId)
+        assertIs<PikPakPlaybackState.Status.Idle>(coordinator.state.value.status)
     }
 
     @Test

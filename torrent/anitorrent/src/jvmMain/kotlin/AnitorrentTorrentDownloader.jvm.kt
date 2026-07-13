@@ -38,6 +38,7 @@ import kotlin.coroutines.CoroutineContext
 internal fun TorrentDownloaderConfig.toSessionSettings(): session_settings_t {
     val config = this
     return session_settings_t().apply {
+        upload_enabled = config.uploadEnabled
         user_agent = config.userAgent
         peer_fingerprint = config.peerFingerprint
         handshake_client_version = config.handshakeClientVersion

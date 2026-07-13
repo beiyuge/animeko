@@ -80,8 +80,8 @@ class TorrentMediaCacheStorageTest : AbstractTorrentMediaCacheEngineTest() {
             metadataStore,
             engine.also { cacheEngine = it },
             MutableStateFlow(1.2f),
-            "本地",
-            this.coroutineContext,
+            displayName = "本地",
+            parentCoroutineContext = this.coroutineContext,
         ).also {
             storages.add(it)
         }

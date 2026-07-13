@@ -17,12 +17,14 @@ import me.him188.ani.utils.platform.Platform
 
 @Serializable
 data class AnitorrentConfig(
+    /** Whether this client may upload BitTorrent piece payloads. */
+    val uploadEnabled: Boolean = true,
     /**
      * 设置为 [FileSize.Unspecified] 表示无限
      */
     val downloadRateLimit: FileSize = FileSize.Unspecified,
     /**
-     * 设置为 [FileSize.Unspecified] 表示无限, [FileSize.Zero] 表示不允许上传
+     * 设置为 [FileSize.Unspecified] 表示无限.
      */
     val uploadRateLimit: FileSize = DEFAULT_UPLOAD_RATE_LIMIT,
     /**

@@ -9,9 +9,14 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlinx.io.IOException
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
@@ -41,6 +46,8 @@ import kotlin.coroutines.cancellation.CancellationException
 class OfflineDownloadMediaResolver(
     private val engine: OfflineDownloadEngine,
     private val fallback: MediaResolver? = null,
+    private val playbackCoordinator: PikPakPlaybackCoordinator? = null,
+    private val torrentAccessPolicy: LocalTorrentAccessPolicy? = null,
 ) : MediaResolver {
     private val logger = logger<OfflineDownloadMediaResolver>()
 
@@ -58,6 +65,13 @@ class OfflineDownloadMediaResolver(
         episode: EpisodeMetadata,
     ): MediaDataProvider<MediaData> {
         if (!supports(media)) throw UnsupportedMediaException(media)
+        if (playbackCoordinator?.consumeLocalFallback(media.mediaId) == true) {
+            val fb = fallback
+            if (fb != null && fb.supports(media)) {
+                playbackCoordinator.localFallbackStarted(media.mediaId)
+                return fb.resolve(media, episode)
+            }
+        }
         val uri = when (val d = media.download) {
             is ResourceLocation.MagnetLink -> d.uri
             is ResourceLocation.HttpTorrentFile -> d.uri
@@ -85,6 +99,7 @@ class OfflineDownloadMediaResolver(
         logger.info {
             "[${engine.id}] resolving media '${media.mediaId}' via ${engine.displayName}"
         }
+        playbackCoordinator?.begin(media.mediaId)
         // A caller cancel must propagate, but [TimeoutCancellationException]
         // (also a CancellationException) is the engine signalling "I didn't
         // deliver in time" — that's a legitimate engine failure and should
@@ -92,10 +107,22 @@ class OfflineDownloadMediaResolver(
         // must stay ordered subclass-first: Kotlin picks the first matching
         // block, so TimeoutCancellationException must precede CancellationException.
         val resolved = try {
-            engine.resolve(uri, pickVideoFile)
+            coroutineScope {
+                val progressJob = launch(start = CoroutineStart.UNDISPATCHED) {
+                    engine.resolutionProgress.drop(1).collect {
+                        playbackCoordinator?.updateProgress(media.mediaId, it)
+                    }
+                }
+                try {
+                    engine.resolve(uri, pickVideoFile)
+                } finally {
+                    progressJob.cancel()
+                }
+            }
         } catch (e: TimeoutCancellationException) {
             return handleEngineFailure(media, episode, e, ResolutionFailures.FETCH_TIMEOUT)
         } catch (e: CancellationException) {
+            playbackCoordinator?.reset(media.mediaId)
             throw e
         } catch (e: OfflineDownloadAuthException) {
             return handleEngineFailure(media, episode, e, ResolutionFailures.ENGINE_ERROR)
@@ -107,11 +134,14 @@ class OfflineDownloadMediaResolver(
             return handleEngineFailure(media, episode, e, ResolutionFailures.ENGINE_ERROR)
         }
 
-        return HttpStreamingMediaDataProvider(
+        playbackCoordinator?.playing(media.mediaId)
+        return PikPakStreamingMediaDataProvider(
             uri = resolved.streamUrl,
             originalTitle = resolved.fileName ?: media.originalTitle,
             headers = emptyMap(),
             extraFiles = media.extraFiles.toMediampMediaExtraFiles(),
+            mediaId = media.mediaId,
+            playbackCoordinator = playbackCoordinator,
         )
     }
 
@@ -122,12 +152,15 @@ class OfflineDownloadMediaResolver(
         reason: ResolutionFailures,
     ): MediaDataProvider<MediaData> {
         val fb = fallback
-        if (fb != null && fb.supports(media)) {
+        val localFallbackBlocked = torrentAccessPolicy?.isBlocked?.value == true
+        if (!localFallbackBlocked && fb != null && fb.supports(media)) {
+            playbackCoordinator?.localFallbackStarted(media.mediaId)
             logger.warn(cause) {
                 "[${engine.id}] resolve failed ($reason); falling back to local resolver"
             }
             return fb.resolve(media, episode)
         }
+        playbackCoordinator?.failed(media.mediaId, cause)
         logger.warn(cause) { "[${engine.id}] resolve failed ($reason); no fallback available" }
         throw MediaResolutionException(reason, cause)
     }

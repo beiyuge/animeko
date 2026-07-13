@@ -27,6 +27,10 @@ import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.settings_pikpak_description
 import me.him188.ani.app.ui.lang.settings_pikpak_enabled
+import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent
+import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent_description
+import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent_confirm_title
+import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent_confirm_message
 import me.him188.ani.app.ui.lang.settings_pikpak_password
 import me.him188.ani.app.ui.lang.settings_pikpak_password_description
 import me.him188.ani.app.ui.lang.settings_pikpak_password_hidden
@@ -59,6 +63,7 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
 ) {
     val config by state
     var showRecommendDialog by remember { mutableStateOf(false) }
+    var showPreventAnitorrentDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Group(
@@ -80,6 +85,18 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
 
         AniAnimatedVisibility(visible = config.enabled) {
             Column {
+                SwitchItem(
+                    checked = config.preventAnitorrentStart,
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            showPreventAnitorrentDialog = true
+                        } else {
+                            state.update(config.copy(preventAnitorrentStart = false))
+                        }
+                    },
+                    title = { Text(stringResource(Lang.settings_pikpak_prevent_anitorrent)) },
+                    description = { Text(stringResource(Lang.settings_pikpak_prevent_anitorrent_description)) },
+                )
                 TextFieldItem(
                     value = config.username,
                     title = { Text(stringResource(Lang.settings_pikpak_username)) },
@@ -196,6 +213,27 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
             },
             dismissButton = {
                 TextButton(onClick = { showRecommendDialog = false }) {
+                    Text(stringResource(Lang.settings_pikpak_recommend_dismiss))
+                }
+            },
+        )
+    }
+
+    if (showPreventAnitorrentDialog) {
+        AlertDialog(
+            onDismissRequest = { showPreventAnitorrentDialog = false },
+            title = { Text(stringResource(Lang.settings_pikpak_prevent_anitorrent_confirm_title)) },
+            text = { Text(stringResource(Lang.settings_pikpak_prevent_anitorrent_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        state.update(config.copy(preventAnitorrentStart = true))
+                        showPreventAnitorrentDialog = false
+                    },
+                ) { Text(stringResource(Lang.settings_pikpak_recommend_apply)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPreventAnitorrentDialog = false }) {
                     Text(stringResource(Lang.settings_pikpak_recommend_dismiss))
                 }
             },

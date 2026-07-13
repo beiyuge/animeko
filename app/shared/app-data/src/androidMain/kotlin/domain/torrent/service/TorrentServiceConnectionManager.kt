@@ -43,6 +43,8 @@ import me.him188.ani.app.data.persistent.database.dao.TorrentCacheInfoEntity
 import me.him188.ani.app.domain.media.cache.engine.TorrentEngineAccess
 import me.him188.ani.app.domain.media.cache.engine.UnsafeTorrentEngineAccessApi
 import me.him188.ani.app.domain.torrent.IRemoteAniTorrentEngine
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.app.domain.torrent.TemporaryTorrentPlaybackToken
 import me.him188.ani.utils.coroutines.childScope
 import me.him188.ani.utils.coroutines.update
 import me.him188.ani.utils.logging.info
@@ -120,6 +122,23 @@ class TorrentServiceConnectionManager(
 
     override val lifecycle: Lifecycle = serviceLifecycleRegistry
     private val requestQueue = MutableStateFlow(persistentListOf<Any>())
+    private val torrentStartBlocked = MutableStateFlow(false)
+
+    fun bindAccessPolicy(policy: LocalTorrentAccessPolicy) {
+        scope.launch {
+            policy.isBlocked.collect { blocked ->
+                torrentStartBlocked.value = blocked
+                if (blocked) {
+                    // Existing ordinary playback/cache leases must not keep the
+                    // service alive after the user confirms the block. A
+                    // playback-scoped override is the only lease retained.
+                    requestQueue.update {
+                        removeAll { it !is TemporaryTorrentPlaybackToken }
+                    }
+                }
+            }
+        }
+    }
 
     val connection: TorrentServiceConnection<IRemoteAniTorrentEngine> get() = _connection
     override val isServiceConnected: StateFlow<Boolean> = connection.connected
@@ -143,6 +162,10 @@ class TorrentServiceConnectionManager(
 
     @UnsafeTorrentEngineAccessApi
     override fun requestService(token: Any, use: Boolean): Boolean {
+        if (use && torrentStartBlocked.value && token !is TemporaryTorrentPlaybackToken) {
+            logger.info { "Blocked Anitorrent service request: $token" }
+            return false
+        }
         requestQueue.update {
             if (use) {
                 add(token)
@@ -172,8 +195,13 @@ class TorrentServiceConnectionManager(
                 requestQueue.map { it.isNotEmpty() },
                 isServiceConnected,
                 processLifecycle.currentStateFlow,
-            ) { allCompleted, keep, connected, currentState ->
-                Triple(currentState, keep || !allCompleted, connected)
+                torrentStartBlocked,
+            ) { allCompleted, keep, connected, currentState, blocked ->
+                LifecycleInput(
+                    currentState = currentState,
+                    shouldUseEngine = keep || (!blocked && !allCompleted),
+                    connected = connected,
+                )
             }
                 .distinctUntilChanged()
                 .map { (currentState, shouldMoveToResumed, connected) ->
@@ -223,6 +251,12 @@ class TorrentServiceConnectionManager(
     private fun onServiceDisconnected() {
         _connection.onServiceDisconnected()
     }
+
+    private data class LifecycleInput(
+        val currentState: Lifecycle.State,
+        val shouldUseEngine: Boolean,
+        val connected: Boolean,
+    )
 }
 
 /**

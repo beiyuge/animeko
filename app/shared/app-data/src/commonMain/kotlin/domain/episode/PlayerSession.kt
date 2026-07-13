@@ -10,19 +10,26 @@
 package me.him188.ani.app.domain.episode
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.hls.HlsPlaybackProxySession
 import me.him188.ani.app.domain.media.fetch.MediaFetchSession
 import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
 import me.him188.ani.app.domain.media.resolver.MediaResolutionException
 import me.him188.ani.app.domain.media.resolver.MediaResolver
+import me.him188.ani.app.domain.media.resolver.PikPakBackedMediaDataProvider
+import me.him188.ani.app.domain.media.resolver.ManagedMediaDataProvider
 import me.him188.ani.app.domain.media.resolver.MediaSourceOpenException
 import me.him188.ani.app.domain.media.resolver.OpenFailures
 import me.him188.ani.app.domain.media.resolver.ResolutionFailures
@@ -30,6 +37,8 @@ import me.him188.ani.app.domain.media.resolver.TorrentBackedMediaDataProvider
 import me.him188.ani.app.domain.media.resolver.UnsupportedMediaException
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.player.VideoLoadingState
+import me.him188.ani.app.domain.player.PlaybackBackend
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCase
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.source.MediaSourceKind
@@ -62,8 +71,23 @@ class PlayerSession(
     val mediaResolver: MediaResolver by koin.inject()
     private val hlsPlaybackPreparer: HlsPlaybackPreparer by koin.inject()
     private val getVideoScaffoldConfigUseCase: GetVideoScaffoldConfigUseCase by koin.inject()
+    private val localTorrentAccessPolicy: LocalTorrentAccessPolicy by koin.inject()
+    private val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var hlsPlaybackProxySession: HlsPlaybackProxySession? = null
+    private var managedMediaDataProvider: ManagedMediaDataProvider? = null
+    @Volatile
+    private var currentBackend: PlaybackBackend? = null
+
+    init {
+        lifecycleScope.launch {
+            localTorrentAccessPolicy.isBlocked.collect { blocked ->
+                if (blocked && currentBackend == PlaybackBackend.LocalTorrent) {
+                    stopPlayback()
+                }
+            }
+        }
+    }
 
     private val _videoLoadingStateFlow: MutableStateFlow<VideoLoadingState> =
         MutableStateFlow(VideoLoadingState.Initial)
@@ -96,6 +120,7 @@ class PlayerSession(
                 VideoLoadingState.DecodingData(isBt = media.kind == MediaSourceKind.BitTorrent),
             )
 
+            managedMediaDataProvider = source as? ManagedMediaDataProvider
             val data = source.open(scopeForCleanup = backgroundScope) // may throw MediaSourceOpenException
             val preparedData = prepareHlsPlaybackIfEnabled(data).also {
                 preparedHlsPlaybackProxySession = it.session
@@ -106,7 +131,16 @@ class PlayerSession(
             hlsPlaybackProxySession = preparedHlsPlaybackProxySession
             preparedHlsPlaybackProxySession = null
 
-            _videoLoadingStateFlow.value = VideoLoadingState.Succeed(isBt = source is TorrentBackedMediaDataProvider)
+            val backend = when (source) {
+                is TorrentBackedMediaDataProvider -> PlaybackBackend.LocalTorrent
+                is PikPakBackedMediaDataProvider -> PlaybackBackend.PikPak
+                else -> PlaybackBackend.Http
+            }
+            currentBackend = backend
+            _videoLoadingStateFlow.value = VideoLoadingState.Succeed(
+                isBt = source is TorrentBackedMediaDataProvider,
+                backend = backend,
+            )
             withContext(mainDispatcher) {
                 player.resume()
             }
@@ -155,12 +189,17 @@ class PlayerSession(
     }
 
     suspend fun stopPlayback() {
+        currentBackend = null
         stopPlayer()
         closeHlsPlaybackProxySession()
+        closeManagedMediaDataProvider()
     }
 
     fun close() {
+        currentBackend = null
+        lifecycleScope.cancel()
         closeHlsPlaybackProxySession()
+        closeManagedMediaDataProvider()
         player.close()
     }
 
@@ -188,6 +227,11 @@ class PlayerSession(
     private fun closeHlsPlaybackProxySession() {
         hlsPlaybackProxySession?.close()
         hlsPlaybackProxySession = null
+    }
+
+    private fun closeManagedMediaDataProvider() {
+        managedMediaDataProvider?.closeProvider()
+        managedMediaDataProvider = null
     }
 
     companion object {

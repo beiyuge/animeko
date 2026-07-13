@@ -271,7 +271,10 @@ class TorrentMediaCacheEngine(
         /**
          * 订阅当前 TorrentMediaCache 的统计信息以更新它的 metadata.
          */
-        suspend fun subscribeStats(shareRatioLimitFlow: Flow<Float>) {
+        suspend fun subscribeStats(
+            shareRatioLimitFlow: Flow<Float>,
+            uploadEnabledFlow: Flow<Boolean>,
+        ) {
             isServiceConnected.collectLatest { serviceStarted ->
                 if (!serviceStarted) return@collectLatest
 
@@ -287,6 +290,7 @@ class TorrentMediaCacheEngine(
                     val sessionStats = sessionStatsFlow.first()
 
                     val currentShareRatioLimit = shareRatioLimitFlow.first()
+                    val uploadEnabled = uploadEnabledFlow.first()
                     val currentShareRatio = sessionStats.uploadedBytes /
                             entryFileStats.downloadedBytes.coerceAtLeast(1).toFloat()
 
@@ -294,6 +298,7 @@ class TorrentMediaCacheEngine(
                         ?: error("No entity with id ${origin.mediaId} exists while subscribing cache.")
 
                     val finished = entity.completed || // metadata 已记录 true 表示已完成
+                            (entryFileStats.isDownloadFinished && !uploadEnabled) ||
                             (entryFileStats.isDownloadFinished && currentShareRatio >= currentShareRatioLimit) // 统计判断达到条件也是完成
 
                     // 无论如何都先更新一次数据
@@ -330,14 +335,15 @@ class TorrentMediaCacheEngine(
                             sessionStatsFlow,
                             fileEntryFlow.flatMapLatest { it.fileStats.filterNotNull() },
                             shareRatioLimitFlow,
-                        ) task@{ sessionStats, fileStats, shareRatioLimit ->
+                            uploadEnabledFlow,
+                        ) task@{ sessionStats, fileStats, shareRatioLimit, uploadEnabledNow ->
                             if (!fileStats.isDownloadFinished) return@task
 
                             val shareRatio = sessionStats.uploadedBytes /
                                     fileStats.downloadedBytes.coerceAtLeast(1).toFloat()
 
                             // 没达到分享率才进入这里的逻辑, 达到分享率直接更新 metadata
-                            if (shareRatio < shareRatioLimit) {
+                            if (uploadEnabledNow && shareRatio < shareRatioLimit) {
                                 val currentTimeMillis = currentTimeMillis()
 
                                 // 如果距离上次上传活动小于 10 分钟, 不能更新 metadata, 因为 10 分钟内还可能有上传

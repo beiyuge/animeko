@@ -46,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -55,6 +56,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.contentColorFor
@@ -74,6 +76,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -93,10 +96,10 @@ import me.him188.ani.app.domain.episode.SubjectRecommendation
 import me.him188.ani.app.domain.media.TestMediaList
 import me.him188.ani.app.domain.media.cache.EpisodeCacheStatus
 import me.him188.ani.app.domain.player.VideoLoadingState
+import me.him188.ani.app.domain.media.resolver.PikPakPlaybackState
+import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import me.him188.ani.app.navigation.LocalNavigator
 import me.him188.ani.app.navigation.SubjectDetailPlaceholder
-import me.him188.ani.app.platform.LocalContext
-import me.him188.ani.app.platform.navigation.LocalBrowserNavigator
 import me.him188.ani.app.ui.foundation.ProvideCompositionLocalsForPreview
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.foundation.animation.LocalAniMotionScheme
@@ -120,6 +123,19 @@ import me.him188.ani.app.ui.lang.subject_episode_danmaku_time_shift_title
 import me.him188.ani.app.ui.lang.subject_episode_related_recommendations
 import me.him188.ani.app.ui.lang.subject_episode_select_media_source
 import me.him188.ani.app.ui.lang.subject_episode_wish_change_to
+import me.him188.ani.app.ui.lang.pikpak_playback_authenticating
+import me.him188.ani.app.ui.lang.pikpak_playback_preparing
+import me.him188.ani.app.ui.lang.pikpak_playback_submitting
+import me.him188.ani.app.ui.lang.pikpak_playback_waiting
+import me.him188.ani.app.ui.lang.pikpak_playback_downloading
+import me.him188.ani.app.ui.lang.pikpak_playback_selecting
+import me.him188.ani.app.ui.lang.pikpak_playback_resolving_url
+import me.him188.ani.app.ui.lang.pikpak_playback_active
+import me.him188.ani.app.ui.lang.pikpak_playback_failed
+import me.him188.ani.app.ui.lang.pikpak_playback_retry
+import me.him188.ani.app.ui.lang.pikpak_playback_use_anitorrent_once
+import me.him188.ani.app.ui.lang.pikpak_playback_local_fallback
+import me.him188.ani.app.ui.lang.pikpak_playback_traffic
 import me.him188.ani.app.ui.mediafetch.MediaSelectorState
 import me.him188.ani.app.ui.mediafetch.MediaSelectorView
 import me.him188.ani.app.ui.mediafetch.MediaSourceResultListPresentation
@@ -161,6 +177,7 @@ import me.him188.ani.danmaku.api.provider.DanmakuProviderId
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.source.MediaFetchRequest
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
+import me.him188.ani.datasources.api.topic.FileSize.Companion.bytes
 import me.him188.ani.utils.analytics.Analytics
 import me.him188.ani.utils.analytics.AnalyticsEvent.Companion.SubjectEnter
 import me.him188.ani.utils.analytics.AnalyticsEvent.Companion.SubjectRecommendationClick
@@ -217,6 +234,8 @@ fun EpisodeDetails(
     onEpisodeCollectionUpdate: (SetEpisodeCollectionTypeRequest) -> Unit,
     loadError: EpisodePageLoadError?,
     onRetryLoad: () -> Unit,
+    onRetryPikPak: () -> Unit = {},
+    onUseAnitorrentOnce: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
     danmakuListState: DanmakuListState? = null,
@@ -256,8 +275,6 @@ fun EpisodeDetails(
         }
     }
 
-    val context = LocalContext.current
-    val browserNavigator = LocalBrowserNavigator.current
 
     var expandDanmakuStatistics by rememberSaveable { mutableStateOf(false) }
     var expandEpisodeList by rememberSaveable { mutableStateOf(false) }
@@ -265,6 +282,7 @@ fun EpisodeDetails(
     var showDanmakuInfoSheet by rememberSaveable { mutableStateOf(false) }
 
     val subjectRecommendations by remember(state) { state.recommendations }
+    val videoStatistics by videoStatisticsFlow.collectAsStateWithLifecycle(VideoStatistics.Placeholder)
     val atLeastMedium = currentWindowAdaptiveInfo1().isWidthAtLeastMedium
 
     EditableSubjectCollectionTypeDialogsHost(editableSubjectCollectionTypeState)
@@ -466,6 +484,13 @@ fun EpisodeDetails(
                 )
             }
         },
+        playbackSourceStatus = {
+            PikPakPlaybackStatus(
+                state = videoStatistics.pikPakPlaybackState,
+                onRetry = onRetryPikPak,
+                onUseAnitorrentOnce = onUseAnitorrentOnce,
+            )
+        },
         danmakuStatisticsSummary = {
             DanmakuMatchInfoSummaryBanner(
                 danmakuStatistics,
@@ -559,29 +584,25 @@ fun EpisodeDetails(
             }
         } else null,
         subjectRecommendations = { horizontalPadding ->
-            item("subject_recommendation_header") {
-                SectionTitle {
-                    Text(stringResource(Lang.subject_episode_related_recommendations))
+            if (subjectRecommendations.isNotEmpty()) {
+                item("subject_recommendation_header") {
+                    SectionTitle {
+                        Text(stringResource(Lang.subject_episode_related_recommendations))
+                    }
                 }
-            }
-            for (recommendation in subjectRecommendations) {
-                item("subject_recommendation_${recommendation.uniqueId}") {
-                    SubjectRecommendationCard(
+                for (recommendation in subjectRecommendations) {
+                    item("subject_recommendation_${recommendation.uniqueId}") {
+                        SubjectRecommendationCard(
                         {
-                            val uri = recommendation.uri
                             val targetSubjectId = recommendation.subjectId?.toInt()
                             Analytics.recordEvent(SubjectRecommendationClick) {
                                 targetSubjectId?.let { put("subject_id", it) }
-                                uri?.let { put("target_uri", it) }
                             }
                             Analytics.recordEvent(SubjectEnter) {
                                 put("source", "episode_recommendation")
                                 targetSubjectId?.let { put("subject_id", it) }
-                                uri?.let { put("target_uri", it) }
                             }
-                            if (uri != null) {
-                                browserNavigator.openBrowser(context, uri)
-                            } else if (targetSubjectId != null) {
+                            if (targetSubjectId != null) {
                                 navigator.navigateSubjectDetails(
                                     targetSubjectId,
                                     SubjectDetailPlaceholder(
@@ -598,7 +619,8 @@ fun EpisodeDetails(
                             .fillMaxWidth()
                             .padding(horizontalPadding)
                             .padding(bottom = 12.dp),
-                    )
+                        )
+                    }
                 }
             }
         },
@@ -778,6 +800,96 @@ private fun SectionTitle(
     }
 }
 
+@Composable
+internal fun PikPakPlaybackStatus(
+    state: PikPakPlaybackState,
+    onRetry: () -> Unit,
+    onUseAnitorrentOnce: (String) -> Unit,
+) {
+    if (state.status is PikPakPlaybackState.Status.Idle) return
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().testTag("PikPakPlaybackStatus"),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when (val status = state.status) {
+                PikPakPlaybackState.Status.Idle -> Unit
+                is PikPakPlaybackState.Status.Resolving -> {
+                    Text(
+                        when (status.progress) {
+                            OfflineDownloadProgress.Idle,
+                            OfflineDownloadProgress.Authenticating -> stringResource(Lang.pikpak_playback_authenticating)
+                            OfflineDownloadProgress.PreparingStorage -> stringResource(Lang.pikpak_playback_preparing)
+                            OfflineDownloadProgress.Submitting -> stringResource(Lang.pikpak_playback_submitting)
+                            OfflineDownloadProgress.Waiting -> stringResource(Lang.pikpak_playback_waiting)
+                            is OfflineDownloadProgress.Downloading -> stringResource(Lang.pikpak_playback_downloading)
+                            OfflineDownloadProgress.SelectingFile -> stringResource(Lang.pikpak_playback_selecting)
+                            OfflineDownloadProgress.ResolvingStreamUrl,
+                            OfflineDownloadProgress.Ready -> stringResource(Lang.pikpak_playback_resolving_url)
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    val fraction = (status.progress as? OfflineDownloadProgress.Downloading)?.fraction
+                    if (fraction == null) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text("${(fraction * 100).roundToLong()}%", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+
+                PikPakPlaybackState.Status.Playing -> {
+                    Text(stringResource(Lang.pikpak_playback_active), style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        stringResource(
+                            Lang.pikpak_playback_traffic,
+                            state.downloadBytesPerSecond.bytes.toString(),
+                            state.downloadedBytes.bytes.toString(),
+                            0L.bytes.toString(),
+                            0L.bytes.toString(),
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                is PikPakPlaybackState.Status.Failed -> {
+                    Text(
+                        stringResource(Lang.pikpak_playback_failed),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    status.message?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onRetry) {
+                            Text(stringResource(Lang.pikpak_playback_retry))
+                        }
+                        val mediaId = state.mediaId
+                        if (state.failureCount >= 2 && mediaId != null) {
+                            OutlinedButton(onClick = { onUseAnitorrentOnce(mediaId) }) {
+                                Text(stringResource(Lang.pikpak_playback_use_anitorrent_once))
+                            }
+                        }
+                    }
+                }
+
+                PikPakPlaybackState.Status.LocalAnitorrentFallback -> {
+                    Text(stringResource(Lang.pikpak_playback_local_fallback))
+                }
+            }
+        }
+    }
+}
+
 /**
  * [subjectRecommendations] 是最底部的内容, 可以使用 [LazyListScope].
  */
@@ -788,6 +900,7 @@ fun EpisodeDetailsScaffold(
     loadError: @Composable () -> Unit,
     airingStatus: @Composable (FlowRowScope.() -> Unit),
     mediaSelectorItem: @Composable (contentPadding: PaddingValues) -> Unit,
+    playbackSourceStatus: @Composable () -> Unit,
     danmakuStatisticsSummary: @Composable () -> Unit,
     danmakuStatistics: @Composable (contentPadding: PaddingValues) -> Unit,
     episodeListSection: @Composable () -> Unit,
@@ -882,6 +995,12 @@ fun EpisodeDetailsScaffold(
         item("episode_detail_exposed_episode_item") {
             Row(Modifier) {
                 mediaSelectorItem(horizontalPaddingValues)
+            }
+        }
+
+        item("episode_detail_playback_source_status") {
+            Box(Modifier.padding(horizontalPaddingValues).padding(top = 8.dp)) {
+                playbackSourceStatus()
             }
         }
 
@@ -1126,8 +1245,9 @@ private fun PreviewEpisodeDetailsImpl(
             onManualMatchDanmaku = {
             },
             onEpisodeCollectionUpdate = {},
-            null, {},
-            modifier
+            loadError = null,
+            onRetryLoad = {},
+            modifier = modifier
                 .padding(bottom = 16.dp, top = 8.dp)
                 .padding(it),
         )

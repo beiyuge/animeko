@@ -10,6 +10,7 @@
 package me.him188.ani.torrent.offline
 
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.time.Instant
 
 /**
@@ -31,6 +32,10 @@ interface OfflineDownloadEngine {
      */
     val isSupported: StateFlow<Boolean>
 
+    /** Best-effort progress for the currently serialized resolve call. */
+    val resolutionProgress: StateFlow<OfflineDownloadProgress>
+        get() = EmptyOfflineDownloadProgress
+
     /**
      * Submit the magnet (or http `.torrent` URL) to the provider, wait for the
      * offline download to finish, and return a playable HTTPS URL plus metadata.
@@ -51,6 +56,21 @@ interface OfflineDownloadEngine {
         pickVideoFile: (candidateFilenames: List<String>) -> String? = { null },
     ): ResolvedMedia
 }
+
+sealed interface OfflineDownloadProgress {
+    data object Idle : OfflineDownloadProgress
+    data object Authenticating : OfflineDownloadProgress
+    data object PreparingStorage : OfflineDownloadProgress
+    data object Submitting : OfflineDownloadProgress
+    data object Waiting : OfflineDownloadProgress
+    data class Downloading(val fraction: Float?) : OfflineDownloadProgress
+    data object SelectingFile : OfflineDownloadProgress
+    data object ResolvingStreamUrl : OfflineDownloadProgress
+    data object Ready : OfflineDownloadProgress
+}
+
+private val EmptyOfflineDownloadProgress: StateFlow<OfflineDownloadProgress> =
+    MutableStateFlow(OfflineDownloadProgress.Idle)
 
 /**
  * The outcome of a successful [OfflineDownloadEngine.resolve].

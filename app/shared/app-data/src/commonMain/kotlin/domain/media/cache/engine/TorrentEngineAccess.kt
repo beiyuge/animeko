@@ -11,7 +11,14 @@ package me.him188.ani.app.domain.media.cache.engine
 
 import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CoroutineScope
+import me.him188.ani.app.domain.torrent.LocalTorrentBlockedException
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.app.domain.torrent.TemporaryTorrentPlaybackToken
 import me.him188.ani.app.data.persistent.PlatformDataStoreManager
 import me.him188.ani.app.domain.media.cache.storage.MediaCacheStorage
 import me.him188.ani.app.domain.torrent.TorrentEngine
@@ -75,7 +82,7 @@ interface TorrentEngineAccess {
 @OptIn(UnsafeTorrentEngineAccessApi::class)
 inline fun <T> TorrentEngineAccess.withServiceRequest(token: Any, block: () -> T): T {
     try {
-        requestService(token, true)
+        if (!requestService(token, true)) throw LocalTorrentBlockedException()
         return block()
     } finally {
         requestService(token, false)
@@ -92,6 +99,20 @@ object AlwaysUseTorrentEngineAccess : TorrentEngineAccess {
     override fun requestService(token: Any, use: Boolean): Boolean {
         return true
     }
+}
+
+/** Desktop access implementation that keeps the native engine lazy while PikPak blocks it. */
+class PolicyAwareTorrentEngineAccess(
+    private val policy: LocalTorrentAccessPolicy,
+    scope: CoroutineScope,
+) : TorrentEngineAccess {
+    override val isServiceConnected: StateFlow<Boolean> = policy.isBlocked
+        .map { !it }
+        .stateIn(scope, SharingStarted.Eagerly, !policy.isBlocked.value)
+
+    @UnsafeTorrentEngineAccessApi
+    override fun requestService(token: Any, use: Boolean): Boolean =
+        !use || !policy.isBlocked.value || token is TemporaryTorrentPlaybackToken
 }
 
 @RequiresOptIn(
@@ -113,5 +134,3 @@ annotation class EnsureTorrentEngineIsAccessible
     level = RequiresOptIn.Level.ERROR,
 )
 annotation class UnsafeTorrentEngineAccessApi
-
-

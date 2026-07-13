@@ -52,6 +52,7 @@ import me.him188.ani.app.domain.torrent.DefaultTorrentManager
 import me.him188.ani.app.domain.torrent.IRemoteAniTorrentEngine
 import me.him188.ani.app.domain.torrent.RemoteAnitorrentEngineFactory
 import me.him188.ani.app.domain.torrent.TorrentManager
+import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.domain.torrent.service.AniTorrentService
 import me.him188.ani.app.domain.torrent.service.TorrentServiceConnection
 import me.him188.ani.app.domain.torrent.service.TorrentServiceConnectionManager
@@ -100,7 +101,9 @@ fun getAndroidModules(
     single<WebCaptchaCoordinator> { AndroidWebCaptchaCoordinator(androidContext()) }
     single<HlsPlaybackPreparer> { PlatformHlsPlaybackPreparer(get()) }
 
-    single<TorrentEngineAccess> { serviceConnectionManager }
+    single<TorrentEngineAccess> {
+        serviceConnectionManager.apply { bindAccessPolicy(get<LocalTorrentAccessPolicy>()) }
+    }
     single<TorrentServiceConnection<IRemoteAniTorrentEngine>> { serviceConnectionManager.connection }
 
     single<MediaSaveDirProvider> {
@@ -216,10 +219,19 @@ fun getAndroidModules(
         )
     }
     factory<MediaResolver> {
-        val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
+        val torrentResolvers = get<TorrentManager>().engines.map {
+            TorrentMediaResolver(it, get(), get<LocalTorrentAccessPolicy>())
+        }
         val btFallback = MediaResolver.from(torrentResolvers)
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
+            listOf<MediaResolver>(
+                OfflineDownloadMediaResolver(
+                    get(),
+                    fallback = btFallback,
+                    playbackCoordinator = get(),
+                    torrentAccessPolicy = get(),
+                ),
+            )
                 .plus(torrentResolvers)
                 .plus(LocalFileMediaResolver())
                 .plus(HttpStreamingMediaResolver())

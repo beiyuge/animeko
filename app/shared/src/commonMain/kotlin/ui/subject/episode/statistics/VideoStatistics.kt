@@ -58,6 +58,7 @@ import me.him188.ani.app.domain.danmaku.DanmakuLoadingState
 import me.him188.ani.app.domain.media.fetch.MediaFetcher
 import me.him188.ani.app.domain.media.player.data.filenameOrNull
 import me.him188.ani.app.domain.media.selector.MediaSelector
+import me.him188.ani.app.domain.media.resolver.PikPakPlaybackState
 import me.him188.ani.app.domain.player.VideoLoadingState
 import me.him188.ani.app.ui.foundation.setClipEntryText
 import me.him188.ani.app.ui.foundation.text.ProvideContentColor
@@ -85,6 +86,7 @@ class VideoStatisticsCollector(
     playerState: MediampPlayer,
     private val mediaSourceInfoProvider: MediaSourceInfoProvider,
     mediaSourceLoading: Flow<Boolean>,
+    pikPakPlaybackState: Flow<PikPakPlaybackState>,
     backgroundScope: CoroutineScope,
 ) {
     val videoStatisticsFlow: StateFlow<VideoStatistics> = kotlin.run {
@@ -97,11 +99,14 @@ class VideoStatisticsCollector(
             selectedMediaFlow
                 .combine(playerState.mediaData.map { it?.filenameOrNull }) { selectedMedia, filename ->
                     filename ?: selectedMedia?.originalTitle
-                },
+            },
             mediaSourceLoading,
             videoLoadingStateFlow,
-            ::VideoStatistics,
-        ).stateIn(
+        ) { media, sourceInfo, filename, loading, videoState ->
+            VideoStatistics(media, sourceInfo, filename, loading, videoState)
+        }.combine(pikPakPlaybackState) { statistics, pikPakState ->
+            statistics.copy(pikPakPlaybackState = pikPakState)
+        }.stateIn(
             backgroundScope,
             SharingStarted.WhileSubscribed(),
             VideoStatistics.Placeholder,
@@ -131,11 +136,12 @@ data class VideoStatistics(
      */
     val mediaSourceLoading: Boolean,
     val videoLoadingState: VideoLoadingState,
+    val pikPakPlaybackState: PikPakPlaybackState = PikPakPlaybackState(),
     val isPlaceholder: Boolean = false,
 ) {
     companion object {
         val Placeholder = VideoStatistics(
-            null, null, null, false, VideoLoadingState.Initial,
+            null, null, null, false, VideoLoadingState.Initial, PikPakPlaybackState(),
             isPlaceholder = true,
         )
     }

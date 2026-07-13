@@ -104,6 +104,8 @@ class TorrentDownloaderConfig(
     val peerFingerprint: String = "-AL4000-",
     val userAgent: String = "ani_libtorrent/3.0.0", // "libtorrent/2.1.0.0", "ani_libtorrent/3.0.0"
     val handshakeClientVersion: String? = "3.0.0",
+    /** Strictly reject all peer piece uploads when false. */
+    val uploadEnabled: Boolean = true,
     /**
      * 0 means unlimited
      */

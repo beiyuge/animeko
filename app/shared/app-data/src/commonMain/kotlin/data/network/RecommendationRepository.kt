@@ -58,7 +58,14 @@ class RecommendationRepository(
                 LoadResult.Page(
                     list,
                     prevKey = if (offset == 0) null else (offset - loadSize).coerceAtLeast(0),
-                    nextKey = if (offset + list.size >= response.total) null else offset + loadSize,
+                    // Pagination follows the server page, not the filtered
+                    // result. An all-ad page must still advance instead of
+                    // requesting the same offset forever.
+                    nextKey = if (response.items.isEmpty() || offset + response.items.size >= response.total) {
+                        null
+                    } else {
+                        offset + response.items.size
+                    },
                 )
             }.also {
                 if (it is LoadResult.Error) {
@@ -69,7 +76,8 @@ class RecommendationRepository(
     }
 
     private fun AniSubjectRecommendation.toRecommendedSubjectInfo(): RecommendedSubjectInfo? {
-        val id = subjectId?.takeIf { it > 0 }?.toInt() ?: return null
+        if (!isInternalSubjectRecommendation()) return null
+        val id = subjectId!!.toInt()
         return RecommendedSubjectInfo(
             bangumiId = id,
             nameCn = subjectNameCn.ifEmpty { subjectName },
@@ -77,3 +85,6 @@ class RecommendationRepository(
         )
     }
 }
+
+internal fun AniSubjectRecommendation.isInternalSubjectRecommendation(): Boolean =
+    uri == null && (subjectId ?: 0L) > 0L
