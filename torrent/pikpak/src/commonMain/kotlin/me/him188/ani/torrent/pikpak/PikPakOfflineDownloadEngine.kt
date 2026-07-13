@@ -52,6 +52,7 @@ import me.him188.ani.utils.logging.debug
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -140,6 +141,8 @@ class PikPakOfflineDownloadEngine(
     // budget covers queueing + work; a caller doesn't starve indefinitely
     // behind an earlier resolve.
     private val resolveMutex = Mutex()
+    private val resolvedMediaCache = PikPakResolvedMediaCache()
+    private var resolvedMediaCacheCredentials: PikPakCredentials? = null
 
     init {
         // Pre-warm the bearer token whenever valid credentials are available.
@@ -170,6 +173,10 @@ class PikPakOfflineDownloadEngine(
             if (!creds.isValid) {
                 throw OfflineDownloadAuthException("PikPak credentials incomplete")
             }
+            if (resolvedMediaCacheCredentials != creds) {
+                resolvedMediaCache.clear()
+                resolvedMediaCacheCredentials = creds
+            }
             val client = clientFor(creds)
             // The SDK's endpoint functions don't auto-ensure a session; they
             // rely on the caller having populated one. The init-block pre-warm
@@ -178,14 +185,20 @@ class PikPakOfflineDownloadEngine(
             _resolutionProgress.value = OfflineDownloadProgress.Authenticating
             client.login()
 
-            // Single-slot design:
+            val sourceKey = sourceKeyFor(uri)
+            resolveCachedSource(client, sourceKey, pickVideoFile)?.let { cached ->
+                logger.info { "[pikpak] memory cache hit: bucket=$sourceKey file=${cached.providerFileId}" }
+                return@withTimeout cached
+            }
+
+            // Server-side playback cache:
             //
             // The engine maintains one well-known folder in the user's PikPak
-            // drive (default name "Animeko-Playing") that always holds at most
-            // one video — whatever's being played right now. Cleanup runs at
-            // the *start* of the next resolve(), not the end of the current
-            // one, so the URL we just handed to libvlc stays valid for this
-            // whole playback session.
+            // drive (default name "Animeko-Playing"). Each source has a stable
+            // bucket, and the configured queue length controls how many source
+            // buckets remain available for direct replay or episode switching.
+            // Cleanup runs at the *start* of a later cache miss, not the end of
+            // the current resolve, so the URL handed to the player remains valid.
             //
             // Benefits over fire-and-forget batchDelete:
             //   * State lives server-side. App crashes / restarts don't leak —
@@ -205,7 +218,6 @@ class PikPakOfflineDownloadEngine(
             // target shared an episode number (e.g. slot held "Android ... 02"
             // and the user opened SPY×FAMILY E02; the filename's "02" pattern
             // matched and we handed back the wrong show).
-            val sourceKey = sourceKeyFor(uri)
             val topEntries = client.listFiles(parentId = slotId)
             val myBucket = topEntries.firstOrNull { it.name == sourceKey }
 
@@ -214,13 +226,10 @@ class PikPakOfflineDownloadEngine(
             // to pick the right episode out of a cached season pack.
             if (myBucket != null) {
                 val cached = collectSlotCandidates(client, myBucket.id)
-                if (cached.isNotEmpty()) {
-                    val hitName = pickVideoFile(cached.map { it.name })
-                    if (hitName != null) {
-                        val hit = cached.first { it.name == hitName }
-                        logger.info { "[pikpak] slot hit: bucket=$sourceKey reusing '${hit.name}' (${hit.id})" }
-                        return@withTimeout buildResolvedMedia(client.getFile(hit.id))
-                    }
+                resolvedMediaCache.replace(sourceKey, cached)
+                resolveCachedSource(client, sourceKey, pickVideoFile)?.let { hit ->
+                    logger.info { "[pikpak] slot hit: bucket=$sourceKey file=${hit.providerFileId}" }
+                    return@withTimeout hit
                 }
             }
 
@@ -231,6 +240,7 @@ class PikPakOfflineDownloadEngine(
                 logger.info { "[pikpak] draining slot: keeping ${(queueLen - 1).coerceAtLeast(0)} newest, deleting ${toEvict.size}" }
                 runCatching { client.batchDelete(toEvict) }
                     .onFailure { logger.warn(it) { "[pikpak] slot drain failed (non-fatal)" } }
+                topEntries.filter { it.id in toEvict }.forEach { resolvedMediaCache.remove(it.name) }
             } else if (queueLen >= SLOT_QUEUE_UNLIMITED_SENTINEL) {
                 logger.debug { "[pikpak] slot queue length = unlimited; skipping eviction" }
             }
@@ -285,34 +295,23 @@ class PikPakOfflineDownloadEngine(
                 val rootInfo = client.getFile(fileId)
                 if (rootInfo.id.isNotEmpty()) failureCleanupId = rootInfo.id
 
-                val videoFile = if (rootInfo.kind == FileKind.FOLDER) {
+                val candidates = if (rootInfo.kind == FileKind.FOLDER) {
                     // Season pack: filter the pack folder's children with the
-                    // caller's pickVideoFile; fetch the chosen child for its
-                    // signed URL. The whole pack folder stays inside the slot
-                    // until the next resolve drains it (cascade delete).
-                    val children = client.listFiles(parentId = rootInfo.id)
-                    val chosenName = pickVideoFile(children.map { it.name })
-                        ?: throw OfflineDownloadRejectedException(
-                            "PikPak folder ${rootInfo.id} contains no matching video " +
-                                    "(files: ${children.joinToString(limit = 10) { it.name }})",
-                        )
-                    val chosen = children.firstOrNull { it.name == chosenName }
-                        ?: throw OfflineDownloadRejectedException(
-                            "pickVideoFile returned '$chosenName' which is not among the folder's children",
-                        )
-                    logger.info {
-                        "[pikpak] season pack: picked '${chosen.name}' (${chosen.id}) " +
-                                "out of ${children.size} children"
-                    }
-                    client.getFile(chosen.id)
+                    // caller's pickVideoFile. Keep every file id in memory so
+                    // switching episode only refreshes the selected child's URL.
+                    client.listFiles(parentId = rootInfo.id)
+                        .filter { it.isFile }
+                        .map { CachedPikPakFile(it.id, it.name) }
                 } else {
-                    rootInfo
+                    listOf(CachedPikPakFile(rootInfo.id, rootInfo.name))
                 }
+                resolvedMediaCache.replace(sourceKey, candidates)
 
-                _resolutionProgress.value = OfflineDownloadProgress.ResolvingStreamUrl
-                buildResolvedMedia(videoFile).also {
-                    _resolutionProgress.value = OfflineDownloadProgress.Ready
-                }
+                resolveCachedSource(client, sourceKey, pickVideoFile)
+                    ?: throw OfflineDownloadRejectedException(
+                        "PikPak resource $sourceKey contains no cached playable file " +
+                                "(files: ${candidates.joinToString(limit = 10) { it.name }})",
+                    )
                 // No cleanup on success; next resolve drains the slot.
             } catch (e: Throwable) {
                 // Failure path: best-effort cleanup inside the slot so a
@@ -334,21 +333,45 @@ class PikPakOfflineDownloadEngine(
     private suspend fun collectSlotCandidates(
         client: PikPakClient,
         slotId: String,
-    ): List<SlotEntry> {
+    ): List<CachedPikPakFile> {
         val top = client.listFiles(parentId = slotId)
-        val out = mutableListOf<SlotEntry>()
+        val out = mutableListOf<CachedPikPakFile>()
         for (entry in top) {
             if (entry.isFolder) {
                 val inner = client.listFiles(parentId = entry.id)
-                inner.filter { it.isFile }.forEach { out += SlotEntry(it.id, it.name) }
+                inner.filter { it.isFile }.forEach { out += CachedPikPakFile(it.id, it.name) }
             } else if (entry.isFile) {
-                out += SlotEntry(entry.id, entry.name)
+                out += CachedPikPakFile(entry.id, entry.name)
             }
         }
         return out
     }
 
-    private data class SlotEntry(val id: String, val name: String)
+    private suspend fun resolveCachedSource(
+        client: PikPakClient,
+        sourceKey: String,
+        pickVideoFile: (candidateFilenames: List<String>) -> String?,
+    ): ResolvedMedia? = resolvedMediaCache.resolve(sourceKey, pickVideoFile) { cachedFile ->
+        _resolutionProgress.value = OfflineDownloadProgress.SelectingFile
+        val detail = try {
+            client.getFile(cachedFile.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logger.debug { "[pikpak] cached file ${cachedFile.id} is unavailable: ${e.message}" }
+            return@resolve null
+        }
+        if (detail.trashed || detail.id.isEmpty()) return@resolve null
+        try {
+            _resolutionProgress.value = OfflineDownloadProgress.ResolvingStreamUrl
+            buildResolvedMedia(detail).also {
+                _resolutionProgress.value = OfflineDownloadProgress.Ready
+            }
+        } catch (e: OfflineDownloadRejectedException) {
+            logger.debug { "[pikpak] cached file ${cachedFile.id} is not playable: ${e.message}" }
+            null
+        }
+    }
 
     private fun scheduleCleanup(client: PikPakClient, fileId: String?) {
         if (fileId.isNullOrEmpty()) return
