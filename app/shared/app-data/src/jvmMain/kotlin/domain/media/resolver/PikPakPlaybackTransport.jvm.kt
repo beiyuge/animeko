@@ -8,6 +8,7 @@ package me.him188.ani.app.domain.media.resolver
 import org.openani.mediamp.source.MediaExtraFiles
 import org.openani.mediamp.source.UriMediaData
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.InetAddress
@@ -53,7 +54,11 @@ private class JvmPikPakPlaybackTransportSession(
             try {
                 val socket = server.accept()
                 thread(name = "PikPakPlaybackProxy-connection", isDaemon = true) {
-                    socket.use(::serve)
+                    try {
+                        socket.use(::serve)
+                    } catch (_: IOException) {
+                        // Players cancel in-flight range requests when seeking or recreating the video surface.
+                    }
                 }
             } catch (e: SocketException) {
                 if (!closed.get()) throw e

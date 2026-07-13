@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - '*.*.*.xuanyu'
+      - '*.*.*.xuanyu.*'
 
 permissions:
   contents: write
@@ -61,9 +62,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fx 'version.name=5.7.1.xuanyu' gradle.properties
+          VERSION_NAME="$(sed -n 's/^version.name=//p' gradle.properties)"
+          test -n "$VERSION_NAME"
           grep -Fx 'android.application.id.suffix=.xuanyu' gradle.properties
-          test "${GITHUB_REF_NAME}" = '5.7.1.xuanyu'
+          test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
 
       - name: Prepare signing key
         id: signing
@@ -107,23 +109,23 @@ jobs:
 
           BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$UNIVERSAL")"
           grep -F "package: name='me.him188.ani.xuanyu'" <<< "$BADGING"
-          grep -F "versionName='5.7.1.xuanyu'" <<< "$BADGING"
+          grep -F "versionName='${GITHUB_REF_NAME}'" <<< "$BADGING"
 
           for apk in "$OUTPUT_DIR"/android-default-*-release.apk; do
             "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$apk"
           done
 
           mkdir -p "$RELEASE_DIR"
-          cp "$OUTPUT_DIR/android-default-arm64-v8a-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-arm64-v8a.apk"
-          cp "$OUTPUT_DIR/android-default-x86_64-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-x86_64.apk"
-          cp "$OUTPUT_DIR/android-default-armeabi-v7a-release.apk" "$RELEASE_DIR/ani-5.7.1.xuanyu-armeabi-v7a.apk"
-          cp "$UNIVERSAL" "$RELEASE_DIR/ani-5.7.1.xuanyu-universal.apk"
+          cp "$OUTPUT_DIR/android-default-arm64-v8a-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-arm64-v8a.apk"
+          cp "$OUTPUT_DIR/android-default-x86_64-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-x86_64.apk"
+          cp "$OUTPUT_DIR/android-default-armeabi-v7a-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-armeabi-v7a.apk"
+          cp "$UNIVERSAL" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-universal.apk"
           sha256sum "$RELEASE_DIR"/*.apk > "$RELEASE_DIR/SHA256SUMS"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ani-5.7.1.xuanyu-android-release
+          name: ani-${{ github.ref_name }}-android-release
           path: release/*
           if-no-files-found: error
 
@@ -135,7 +137,7 @@ jobs:
           body: |
             Animeko Android 定制版。
 
-            - 版本：5.7.1.xuanyu
+            - 版本：${{ github.ref_name }}
             - 包名：me.him188.ani.xuanyu
             - APK 已由 GitHub Actions 使用 xyla 发布证书签名并校验。
             - `universal` 适用于大多数设备，其余文件按 CPU 架构选择。

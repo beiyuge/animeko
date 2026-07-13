@@ -7,20 +7,70 @@ package me.him188.ani.app.domain.media.resolver
 
 import org.openani.mediamp.source.MediaExtraFiles
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.InetAddress
-import java.net.URI
 import java.net.ServerSocket
+import java.net.Socket
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PikPakPlaybackTransportTest {
+    @Test
+    fun `client reset does not escape proxy connection thread`() {
+        val upstream = TestRangeServer(
+            payload = ByteArray(4 * 1024 * 1024) { (it % 251).toByte() },
+            requests = CopyOnWriteArrayList(),
+            bodyChunkDelayMillis = 1,
+        )
+        val session = createPikPakPlaybackTransportSession(
+            upstream.uri,
+            mapOf("X-PikPak-Signature" to "signed"),
+            MediaExtraFiles.EMPTY,
+        ) { _, _ -> }
+        val uncaught = AtomicReference<Throwable>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { worker, throwable ->
+            if (worker.name == "PikPakPlaybackProxy-connection") {
+                uncaught.compareAndSet(null, throwable)
+            } else {
+                previousHandler?.uncaughtException(worker, throwable)
+            }
+        }
+
+        try {
+            val proxyUri = URI.create(session.mediaData.uri)
+            Socket(proxyUri.host, proxyUri.port).use { client ->
+                client.soTimeout = 5_000
+                client.setSoLinger(true, 0)
+                client.getOutputStream().write(
+                    "GET ${proxyUri.path} HTTP/1.1\r\nHost: ${proxyUri.host}\r\nConnection: close\r\n\r\n"
+                        .toByteArray(StandardCharsets.US_ASCII),
+                )
+                client.getOutputStream().flush()
+                assertTrue(client.getInputStream().read() >= 0)
+            }
+
+            assertTrue(upstream.requestFinished.await(5, TimeUnit.SECONDS), "Proxy did not release the reset request")
+            assertNull(uncaught.get(), "Client disconnect must not escape the proxy connection thread")
+        } finally {
+            session.close()
+            upstream.close()
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+        }
+    }
+
     @Test
     fun `forwards range and measures bytes actually read from upstream`() {
         val payload = ByteArray(4096) { (it % 251).toByte() }
@@ -80,40 +130,64 @@ class PikPakPlaybackTransportTest {
     private class TestRangeServer(
         private val payload: ByteArray,
         private val requests: MutableList<Pair<String, String?>>,
+        private val bodyChunkDelayMillis: Long = 0,
     ) : AutoCloseable {
         private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val requestFinished = CountDownLatch(1)
         private val running = thread(isDaemon = true, name = "PikPak-test-upstream") {
             while (!server.isClosed) {
                 runCatching { server.accept() }.getOrNull()?.let { socket ->
                     thread(isDaemon = true) {
                         socket.use {
-                            val reader = BufferedReader(InputStreamReader(it.getInputStream(), StandardCharsets.US_ASCII))
-                            val method = reader.readLine().substringBefore(' ')
-                            var range: String? = null
-                            var signature: String? = null
-                            while (true) {
-                                val line = reader.readLine() ?: break
-                                if (line.isEmpty()) break
-                                val name = line.substringBefore(':')
-                                val value = line.substringAfter(':').trim()
-                                if (name.equals("Range", true)) range = value
-                                if (name.equals("X-PikPak-Signature", true)) signature = value
+                            try {
+                                val reader = BufferedReader(
+                                    InputStreamReader(it.getInputStream(), StandardCharsets.US_ASCII),
+                                )
+                                val method = reader.readLine().substringBefore(' ')
+                                var range: String? = null
+                                var signature: String? = null
+                                while (true) {
+                                    val line = reader.readLine() ?: break
+                                    if (line.isEmpty()) break
+                                    val name = line.substringBefore(':')
+                                    val value = line.substringAfter(':').trim()
+                                    if (name.equals("Range", true)) range = value
+                                    if (name.equals("X-PikPak-Signature", true)) signature = value
+                                }
+                                check(signature == "signed")
+                                requests += method to range
+                                val start = range?.substringAfter("bytes=")?.substringBefore('-')?.toInt() ?: 0
+                                val end = range?.substringAfter('-')?.takeIf(String::isNotEmpty)?.toInt()
+                                    ?: payload.lastIndex
+                                val body = payload.copyOfRange(start, end + 1)
+                                val status = if (range == null) "200 OK" else "206 Partial Content"
+                                val headers = buildString {
+                                    append("HTTP/1.1 $status\r\n")
+                                    append("Content-Length: ${body.size}\r\n")
+                                    append("Accept-Ranges: bytes\r\n")
+                                    if (range != null) append("Content-Range: bytes $start-$end/${payload.size}\r\n")
+                                    append("Connection: close\r\n\r\n")
+                                }
+                                it.getOutputStream().write(headers.toByteArray(StandardCharsets.US_ASCII))
+                                if (method != "HEAD") {
+                                    if (bodyChunkDelayMillis == 0L) {
+                                        it.getOutputStream().write(body)
+                                    } else {
+                                        var offset = 0
+                                        while (offset < body.size) {
+                                            val count = minOf(DEFAULT_BUFFER_SIZE, body.size - offset)
+                                            it.getOutputStream().write(body, offset, count)
+                                            it.getOutputStream().flush()
+                                            Thread.sleep(bodyChunkDelayMillis)
+                                            offset += count
+                                        }
+                                    }
+                                }
+                            } catch (_: IOException) {
+                                // The proxy is expected to close this upstream request after its client resets.
+                            } finally {
+                                requestFinished.countDown()
                             }
-                            check(signature == "signed")
-                            requests += method to range
-                            val start = range?.substringAfter("bytes=")?.substringBefore('-')?.toInt() ?: 0
-                            val end = range?.substringAfter('-')?.takeIf(String::isNotEmpty)?.toInt() ?: payload.lastIndex
-                            val body = payload.copyOfRange(start, end + 1)
-                            val status = if (range == null) "200 OK" else "206 Partial Content"
-                            val headers = buildString {
-                                append("HTTP/1.1 $status\r\n")
-                                append("Content-Length: ${body.size}\r\n")
-                                append("Accept-Ranges: bytes\r\n")
-                                if (range != null) append("Content-Range: bytes $start-$end/${payload.size}\r\n")
-                                append("Connection: close\r\n\r\n")
-                            }
-                            it.getOutputStream().write(headers.toByteArray(StandardCharsets.US_ASCII))
-                            if (method != "HEAD") it.getOutputStream().write(body)
                         }
                     }
                 }
