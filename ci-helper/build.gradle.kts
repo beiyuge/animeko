@@ -250,14 +250,20 @@ tasks.register("updateDevVersionNameFromGit") {
         val ref = githubRef.orNull ?: throw GradleException("GITHUB_REF is not provided.")
         val sha = githubSha.orNull ?: throw GradleException("GITHUB_SHA is not provided.")
         val propertiesText = gradleProperties.readText()
-        val baseVersion = (
+        val configuredVersion = (
             Regex("version.name=(.+)").find(propertiesText)
                 ?: error("Failed to find base version. Check version.name in gradle.properties")
             )
             .groupValues[1]
+        val versionSuffix = getPropertyOrNull("ci.dev.version.suffix")
+        val baseVersion = configuredVersion
             .substringBefore("-")
+            .removeSuffix(versionSuffix.orEmpty())
         val branch = ref.substringAfterLast("/")
-        val newVersion = "$baseVersion-$branch-${sha.take(8)}"
+        val newVersion = versionSuffix
+            ?.takeIf(String::isNotBlank)
+            ?.let { "$baseVersion$it" }
+            ?: "$baseVersion-$branch-${sha.take(8)}"
         println("New version name: $newVersion")
         gradleProperties.writeText(
             propertiesText.replaceFirst(Regex("version.name=(.+)"), "version.name=$newVersion"),
