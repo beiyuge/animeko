@@ -78,6 +78,7 @@
     <string name="pikpak_playback_downloading">PikPak: downloading in the cloud…</string>
     <string name="pikpak_playback_selecting">PikPak: selecting the episode file…</string>
     <string name="pikpak_playback_resolving_url">PikPak: obtaining playback URL…</string>
+    <string name="pikpak_playback_cloud_cache_hit">Loaded from cloud cache</string>
     <string name="pikpak_playback_active">Currently playing through PikPak</string>
     <string name="pikpak_playback_failed">PikPak resolution failed</string>
     <string name="pikpak_playback_retry">Retry PikPak</string>

@@ -1,0 +1,184 @@
+name: Desktop Xuanyu Release
+
+on:
+  push:
+    tags:
+      - '*.*.*.xuanyu'
+      - '*.*.*.xuanyu.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-xuanyu-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-desktop:
+    name: Build and publish ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x86_64
+            runner: windows-2022
+            platform: windows
+            arch: x86_64
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz.checksum
+          - label: macOS Apple Silicon
+            runner: macos-15
+            platform: macos
+            arch: aarch64
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz.checksum
+          - label: macOS Intel
+            runner: macos-15-intel
+            platform: macos
+            arch: x86_64
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.6-osx-x64-b895.91.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.6-osx-x64-b895.91.tar.gz.checksum
+          - label: Linux x86_64
+            runner: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz.checksum
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure build
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "ani.android.abis=x86_64"
+            echo "ani.dandanplay.app.id=${{ secrets.DANDANPLAY_APP_ID }}"
+            echo "ani.dandanplay.app.secret=${{ secrets.DANDANPLAY_APP_SECRET }}"
+            echo "ani.sentry.dsn=${{ secrets.SENTRY_DSN }}"
+            echo "kotlin.native.ignoreDisabledTargets=true"
+            echo "jvm.toolchain.version=21"
+          } > local.properties
+
+      - name: Get JBR 21 with JCEF
+        id: jbr
+        env:
+          RUNNER_TOOL_CACHE: ${{ runner.tool_cache }}
+          JBR_URL: ${{ matrix.jbr_url }}
+          JBR_CHECKSUM_URL: ${{ matrix.jbr_checksum_url }}
+        run: python .github/workflows/download_jbr.py
+
+      - name: Set up JBR 21
+        uses: gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d
+        with:
+          java-version: '21'
+          distribution: jdkfile
+          jdkFile: ${{ steps.jbr.outputs.jbrLocation }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-disabled: true
+
+      - name: Validate release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NAME="$(sed -n 's/^version.name=//p' gradle.properties)"
+          test -n "$VERSION_NAME"
+          test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
+
+      - name: Test PikPak playback status UI
+        if: matrix.platform == 'windows'
+        run: >-
+          ./gradlew :app:shared:desktopTest
+          --tests '*PikPakPlaybackStatusTest*'
+          --no-configuration-cache
+          --stacktrace
+          -Porg.gradle.daemon.idletimeout=60000
+          -Dfile.encoding=UTF-8
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
+      - name: Create Linux distributable
+        if: matrix.platform == 'linux'
+        run: >-
+          ./gradlew createReleaseDistributable
+          --no-configuration-cache
+          --stacktrace
+          -Porg.gradle.daemon.idletimeout=60000
+          -Dfile.encoding=UTF-8
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
+      - name: Create Linux AppImage
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          mkdir -p AppDir/usr
+          cp -r app/desktop/build/compose/binaries/main-release/app/Ani/* AppDir/usr
+          cp app/desktop/appResources/linux-x64/AppRun AppDir/AppRun
+          cp app/desktop/appResources/linux-x64/animeko.desktop AppDir/animeko.desktop
+          cp app/desktop/appResources/linux-x64/icon.png AppDir/icon.png
+          chmod a+x AppDir/AppRun AppDir/usr/bin/Ani AppDir/usr/lib/runtime/lib/jcef_helper
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir
+
+      - name: Build desktop packages
+        run: >-
+          ./gradlew :ci-helper:prepareArtifactsForManualUpload
+          --no-configuration-cache
+          --stacktrace
+          -Porg.gradle.daemon.idletimeout=60000
+          -Dfile.encoding=UTF-8
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
+      - name: Include Linux DEB
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEB="$(find app/desktop/build/compose/binaries/main-release/deb -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          cp "$DEB" "ci-helper/build/distribution/ani-${GITHUB_REF_NAME}-linux-x86_64.deb"
+
+      - name: Verify and checksum desktop packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST='ci-helper/build/distribution'
+          find "$DIST" -maxdepth 1 -type f -print
+          test -n "$(find "$DIST" -maxdepth 1 -type f -print -quit)"
+          (
+            cd "$DIST"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum ./*
+            else
+              shasum -a 256 ./*
+            fi > "SHA256SUMS-desktop-${{ matrix.platform }}-${{ matrix.arch }}"
+          )
+
+      - name: Upload desktop build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ani-${{ github.ref_name }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ci-helper/build/distribution/*
+          if-no-files-found: error
+
+      - name: Publish desktop assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ci-helper/build/distribution/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

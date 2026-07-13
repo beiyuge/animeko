@@ -123,6 +123,33 @@ class OfflineDownloadMediaResolverTest {
         assertEquals("https://cdn.example/signed.mp4", opened.uri)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `resolve - cloud cache hit is surfaced in playback state`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            resolveResult = ResolvedMedia(
+                streamUrl = "https://cdn.example/cached.mp4",
+                isCloudCacheHit = true,
+            ),
+        )
+        val policy = LocalTorrentAccessPolicy(
+            MutableStateFlow(PikPakConfig.Default),
+            CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+        )
+        val coordinator = PikPakPlaybackCoordinator(policy)
+        val resolver = OfflineDownloadMediaResolver(
+            engine,
+            playbackCoordinator = coordinator,
+            torrentAccessPolicy = policy,
+        )
+
+        resolver.resolve(magnetMedia, episode)
+
+        assertIs<PikPakPlaybackState.Status.Playing>(coordinator.state.value.status)
+        assertTrue(coordinator.state.value.cloudCacheHit)
+    }
+
     @Test
     fun `resolve - auth failure is delegated to fallback when one is configured`() = runTest {
         val engine = FakeEngine(

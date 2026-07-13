@@ -186,7 +186,7 @@ class PikPakOfflineDownloadEngine(
             client.login()
 
             val sourceKey = sourceKeyFor(uri)
-            resolveCachedSource(client, sourceKey, pickVideoFile)?.let { cached ->
+            resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { cached ->
                 logger.info { "[pikpak] memory cache hit: bucket=$sourceKey file=${cached.providerFileId}" }
                 return@withTimeout cached
             }
@@ -227,7 +227,7 @@ class PikPakOfflineDownloadEngine(
             if (myBucket != null) {
                 val cached = collectSlotCandidates(client, myBucket.id)
                 resolvedMediaCache.replace(sourceKey, cached)
-                resolveCachedSource(client, sourceKey, pickVideoFile)?.let { hit ->
+                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { hit ->
                     logger.info { "[pikpak] slot hit: bucket=$sourceKey file=${hit.providerFileId}" }
                     return@withTimeout hit
                 }
@@ -307,7 +307,7 @@ class PikPakOfflineDownloadEngine(
                 }
                 resolvedMediaCache.replace(sourceKey, candidates)
 
-                resolveCachedSource(client, sourceKey, pickVideoFile)
+                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = false)
                     ?: throw OfflineDownloadRejectedException(
                         "PikPak resource $sourceKey contains no cached playable file " +
                                 "(files: ${candidates.joinToString(limit = 10) { it.name }})",
@@ -351,6 +351,7 @@ class PikPakOfflineDownloadEngine(
         client: PikPakClient,
         sourceKey: String,
         pickVideoFile: (candidateFilenames: List<String>) -> String?,
+        isCloudCacheHit: Boolean,
     ): ResolvedMedia? = resolvedMediaCache.resolve(sourceKey, pickVideoFile) { cachedFile ->
         _resolutionProgress.value = OfflineDownloadProgress.SelectingFile
         val detail = try {
@@ -364,7 +365,7 @@ class PikPakOfflineDownloadEngine(
         if (detail.trashed || detail.id.isEmpty()) return@resolve null
         try {
             _resolutionProgress.value = OfflineDownloadProgress.ResolvingStreamUrl
-            buildResolvedMedia(detail).also {
+            buildResolvedMedia(detail).copy(isCloudCacheHit = isCloudCacheHit).also {
                 _resolutionProgress.value = OfflineDownloadProgress.Ready
             }
         } catch (e: OfflineDownloadRejectedException) {

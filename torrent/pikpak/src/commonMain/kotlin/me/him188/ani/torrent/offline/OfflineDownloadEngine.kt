@@ -82,12 +82,15 @@ private val EmptyOfflineDownloadProgress: StateFlow<OfflineDownloadProgress> =
  *                    surface one. Not load-bearing — used only for diagnostics.
  * @property fileName Original filename from the torrent.
  * @property fileSize In bytes, if known.
+ * @property isCloudCacheHit Whether this resolve reused a provider-side file
+ *                           instead of submitting a new offline task.
  */
 data class ResolvedMedia(
     val streamUrl: String,
     val expiresAt: Instant? = null,
     val fileName: String? = null,
     val fileSize: Long? = null,
+    val isCloudCacheHit: Boolean = false,
     /**
      * Provider-side file identifier, if any. Surfaced so callers (and tests)
      * can issue a follow-up cleanup — e.g. trash/delete the PikPak file after

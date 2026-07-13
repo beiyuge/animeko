@@ -134,7 +134,7 @@ class OfflineDownloadMediaResolver(
             return handleEngineFailure(media, episode, e, ResolutionFailures.ENGINE_ERROR)
         }
 
-        playbackCoordinator?.playing(media.mediaId)
+        playbackCoordinator?.playing(media.mediaId, cloudCacheHit = resolved.isCloudCacheHit)
         return PikPakStreamingMediaDataProvider(
             uri = resolved.streamUrl,
             originalTitle = resolved.fileName ?: media.originalTitle,

@@ -16,6 +16,7 @@ data class PikPakPlaybackState(
     val mediaId: String? = null,
     val status: Status = Status.Idle,
     val failureCount: Int = 0,
+    val cloudCacheHit: Boolean = false,
     val downloadBytesPerSecond: Long = 0,
     val downloadedBytes: Long = 0,
 ) {
@@ -53,10 +54,13 @@ class PikPakPlaybackCoordinator(
         }
     }
 
-    fun playing(mediaId: String) {
+    fun playing(mediaId: String, cloudCacheHit: Boolean = false) {
         _state.update { current ->
             if (current.mediaId != mediaId) current
-            else current.copy(status = PikPakPlaybackState.Status.Playing)
+            else current.copy(
+                status = PikPakPlaybackState.Status.Playing,
+                cloudCacheHit = cloudCacheHit,
+            )
         }
     }
 

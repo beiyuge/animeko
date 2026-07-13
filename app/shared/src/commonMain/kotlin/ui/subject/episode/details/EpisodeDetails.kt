@@ -130,6 +130,7 @@ import me.him188.ani.app.ui.lang.pikpak_playback_waiting
 import me.him188.ani.app.ui.lang.pikpak_playback_downloading
 import me.him188.ani.app.ui.lang.pikpak_playback_selecting
 import me.him188.ani.app.ui.lang.pikpak_playback_resolving_url
+import me.him188.ani.app.ui.lang.pikpak_playback_cloud_cache_hit
 import me.him188.ani.app.ui.lang.pikpak_playback_active
 import me.him188.ani.app.ui.lang.pikpak_playback_failed
 import me.him188.ani.app.ui.lang.pikpak_playback_retry
@@ -847,6 +848,13 @@ internal fun PikPakPlaybackStatus(
                 }
 
                 PikPakPlaybackState.Status.Playing -> {
+                    if (state.cloudCacheHit) {
+                        Text(
+                            stringResource(Lang.pikpak_playback_cloud_cache_hit),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                     Text(stringResource(Lang.pikpak_playback_active), style = MaterialTheme.typography.labelLarge)
                     Text(
                         stringResource(

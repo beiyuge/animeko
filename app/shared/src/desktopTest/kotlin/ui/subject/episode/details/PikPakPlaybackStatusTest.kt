@@ -23,6 +23,7 @@ import me.him188.ani.app.ui.framework.assertScreenshot
 import me.him188.ani.app.ui.framework.runAniComposeUiTest
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.pikpak_playback_active
+import me.him188.ani.app.ui.lang.pikpak_playback_cloud_cache_hit
 import me.him188.ani.app.ui.lang.pikpak_playback_retry
 import me.him188.ani.app.ui.lang.pikpak_playback_use_anitorrent_once
 import me.him188.ani.utils.platform.currentPlatformDesktop
@@ -62,6 +63,30 @@ class PikPakPlaybackStatusTest {
             onNodeWithTag("PikPakPlaybackStatusPreview", useUnmergedTree = true)
                 .assertScreenshot("/screenshots/PikPakPlaybackStatusTest.playing.png")
         }
+    }
+
+    @Test
+    fun `cloud cache hit displays persistent playback notice`() = runAniComposeUiTest {
+        val cacheHit = runBlocking { getString(Lang.pikpak_playback_cloud_cache_hit) }
+        setContent {
+            ProvideCompositionLocalsForPreview {
+                MaterialTheme(colorScheme = darkColorScheme()) {
+                    Box(Modifier.width(520.dp).padding(16.dp)) {
+                        PikPakPlaybackStatus(
+                            PikPakPlaybackState(
+                                mediaId = "episode-cached",
+                                status = PikPakPlaybackState.Status.Playing,
+                                cloudCacheHit = true,
+                            ),
+                            onRetry = {},
+                            onUseAnitorrentOnce = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        onNodeWithText(cacheHit).assertExists()
     }
 
     @Test

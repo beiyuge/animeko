@@ -78,6 +78,7 @@
     <string name="pikpak_playback_downloading">PikPak：云端正在下载…</string>
     <string name="pikpak_playback_selecting">PikPak：正在选择剧集文件…</string>
     <string name="pikpak_playback_resolving_url">PikPak：正在获取播放地址…</string>
+    <string name="pikpak_playback_cloud_cache_hit">已读取云端缓存</string>
     <string name="pikpak_playback_active">当前正在使用 PikPak 进行播放</string>
     <string name="pikpak_playback_failed">PikPak 解析失败</string>
     <string name="pikpak_playback_retry">重试 PikPak</string>
