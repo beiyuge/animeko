@@ -21,6 +21,7 @@ import me.him188.ani.test.runDynamicTests
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class SelectVideoFileAnitorrentEntryTest {
     private val json = Json { ignoreUnknownKeys = true }
@@ -331,7 +332,7 @@ class SelectVideoFileAnitorrentEntryTest {
     )
 
     @TestFactory
-    fun `select normal 01 over PV if no match`() = runDynamicTests(
+    fun `does not select another episode if requested episode is absent`() = runDynamicTests(
         listOf(
             "[DBD-Raws][未来日记][01][1080P][BDRip][HEVC-10bit][FLACx2].mkv",
             "[DBD-Raws][未来日记][PV][01][1080P][BDRip][HEVC-10bit][FLAC].mkv",
@@ -346,14 +347,40 @@ class SelectVideoFileAnitorrentEntryTest {
                     episodeSort = EpisodeSort("08"),
                     episodeEp = null,
                 )
-                assertEquals(
-                    "[DBD-Raws][未来日记][01][1080P][BDRip][HEVC-10bit][FLACx2].mkv",
-                    selected,
-                    message = list.toString(),
-                )
+                assertNull(selected, message = list.toString())
             }
         },
     )
+
+    @Test
+    fun `episode one does not match episode ten by substring fallback`() {
+        val selected = TorrentMediaResolver.selectVideoFileEntry(
+            entries = listOf(
+                "Show - 10 [1080p].mkv",
+                "Show - 11 [1080p].mkv",
+            ),
+            getPath = { this },
+            episodeTitles = emptyList(),
+            episodeSort = EpisodeSort(1),
+            episodeEp = EpisodeSort(1),
+        )
+
+        assertNull(selected)
+    }
+
+    @Test
+    fun `strict cloud selection rejects a sole video for another episode`() {
+        val selected = TorrentMediaResolver.selectVideoFileEntry(
+            entries = listOf("Show - 01 [1080p].mkv"),
+            getPath = { this },
+            episodeTitles = emptyList(),
+            episodeSort = EpisodeSort(2),
+            episodeEp = EpisodeSort(2),
+            allowSingleFileFallback = false,
+        )
+
+        assertNull(selected)
+    }
 
     @Test
     fun `select of full path`() {

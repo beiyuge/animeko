@@ -84,7 +84,6 @@ class OfflineDownloadMediaResolver(
         // offline and local-torrent picks behave identically.
         val episodeTitles = buildList {
             if (episode.title.isNotBlank()) add(episode.title)
-            if (media.originalTitle.isNotBlank()) add(media.originalTitle)
         }
         val pickVideoFile: (List<String>) -> String? = { names ->
             TorrentMediaResolver.selectVideoFileEntry(
@@ -93,6 +92,7 @@ class OfflineDownloadMediaResolver(
                 episodeTitles = episodeTitles,
                 episodeSort = episode.sort,
                 episodeEp = episode.ep,
+                allowSingleFileFallback = false,
             )
         }
 

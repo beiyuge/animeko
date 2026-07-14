@@ -151,6 +151,21 @@ class OfflineDownloadMediaResolverTest {
     }
 
     @Test
+    fun `resolve - PikPak rejects a sole cached video for another episode`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            candidateFilenames = listOf("Show - 02 [1080p].mkv"),
+        )
+        val resolver = OfflineDownloadMediaResolver(engine, fallback = null)
+
+        val failure = assertFailsWith<MediaResolutionException> {
+            resolver.resolve(magnetMedia, episode)
+        }
+
+        assertEquals(ResolutionFailures.NO_MATCHING_RESOURCE, failure.reason)
+    }
+
+    @Test
     fun `resolve - auth failure is delegated to fallback when one is configured`() = runTest {
         val engine = FakeEngine(
             isSupported = true,
@@ -344,6 +359,7 @@ class OfflineDownloadMediaResolverTest {
         isSupported: Boolean,
         private val resolveResult: ResolvedMedia? = null,
         private val resolveThrows: Throwable? = null,
+        private val candidateFilenames: List<String>? = null,
     ) : OfflineDownloadEngine {
         override val id: String = "fake"
         override val displayName: String = "Fake"
@@ -354,6 +370,14 @@ class OfflineDownloadMediaResolverTest {
             pickVideoFile: (candidateFilenames: List<String>) -> String?,
         ): ResolvedMedia {
             resolveThrows?.let { throw it }
+            candidateFilenames?.let { candidates ->
+                val selected = pickVideoFile(candidates)
+                    ?: throw OfflineDownloadRejectedException("no matching cached episode")
+                return ResolvedMedia(
+                    streamUrl = "https://cdn.example/$selected",
+                    fileName = selected,
+                )
+            }
             return resolveResult
                 ?: error("FakeEngine configured with neither result nor exception")
         }

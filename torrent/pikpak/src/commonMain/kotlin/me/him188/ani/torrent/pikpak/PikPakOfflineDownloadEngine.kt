@@ -312,12 +312,11 @@ class PikPakOfflineDownloadEngine(
                 if (rootInfo.id.isNotEmpty()) failureCleanupId = rootInfo.id
 
                 val candidates = if (rootInfo.kind == FileKind.FOLDER) {
-                    // Season pack: filter the pack folder's children with the
-                    // caller's pickVideoFile. Keep every file id in memory so
+                    // Season pack: keep every descendant file id in memory so
                     // switching episode only refreshes the selected child's URL.
-                    client.listFiles(parentId = rootInfo.id)
-                        .filter { it.isFile }
-                        .map { CachedPikPakFile(it.id, it.name) }
+                    collectPikPakFileCandidates(rootInfo.id) { parentId ->
+                        client.listFiles(parentId = parentId)
+                    }
                 } else {
                     listOf(CachedPikPakFile(rootInfo.id, rootInfo.name))
                 }
@@ -343,24 +342,17 @@ class PikPakOfflineDownloadEngine(
      * video-file candidates. Handles both layouts the slot can be in:
      *   * A single file (from a past single-file torrent resolve)
      *   * A folder with children (from a past season-pack resolve)
-     * Nested folders beyond one level aren't expected in practice — PikPak
-     * flattens a torrent's directory structure into a single pack folder.
+     * PikPak usually flattens a torrent's directory structure, but some
+     * provider-side cache hits preserve nested season/disc folders. Traverse
+     * the full subtree so a partial candidate list cannot select a wrong episode.
      */
     private suspend fun collectSlotCandidates(
         client: PikPakClient,
         slotId: String,
     ): List<CachedPikPakFile> {
-        val top = client.listFiles(parentId = slotId)
-        val out = mutableListOf<CachedPikPakFile>()
-        for (entry in top) {
-            if (entry.isFolder) {
-                val inner = client.listFiles(parentId = entry.id)
-                inner.filter { it.isFile }.forEach { out += CachedPikPakFile(it.id, it.name) }
-            } else if (entry.isFile) {
-                out += CachedPikPakFile(entry.id, entry.name)
-            }
+        return collectPikPakFileCandidates(slotId) { parentId ->
+            client.listFiles(parentId = parentId)
         }
-        return out
     }
 
     private suspend fun resolveCachedSource(
@@ -536,6 +528,33 @@ internal fun findSourceBuckets(topEntries: List<FileStat>, sourceKey: String): L
 internal fun selectInstantCompleteEntry(entries: List<FileStat>, idsBeforeProbe: Set<String>): FileStat? =
     entries.filterNot { it.id in idsBeforeProbe }.maxByOrNull { it.createdTime }
         ?: entries.maxByOrNull { it.createdTime }
+
+/** Collects every file below [rootId], guarding against duplicate ids and malformed folder cycles. */
+internal suspend fun collectPikPakFileCandidates(
+    rootId: String,
+    listChildren: suspend (parentId: String) -> List<FileStat>,
+): List<CachedPikPakFile> {
+    val pendingFolders = ArrayDeque<String>()
+    val visitedFolders = mutableSetOf<String>()
+    val filesById = linkedMapOf<String, CachedPikPakFile>()
+    pendingFolders.addLast(rootId)
+
+    while (pendingFolders.isNotEmpty()) {
+        val parentId = pendingFolders.removeFirst()
+        if (!visitedFolders.add(parentId)) continue
+
+        for (entry in listChildren(parentId)) {
+            when {
+                entry.isFolder && entry.id.isNotEmpty() -> pendingFolders.addLast(entry.id)
+                entry.isFile && entry.id.isNotEmpty() -> {
+                    filesById.putIfAbsent(entry.id, CachedPikPakFile(entry.id, entry.name))
+                }
+            }
+        }
+    }
+
+    return filesById.values.toList()
+}
 
 private fun canonicalizeBtih(raw: String): String? {
     val upper = raw.uppercase()

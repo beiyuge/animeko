@@ -124,6 +124,8 @@ class TorrentMediaResolver(
         /**
          * @param episodeSort 在系列中的集数, 例如第二季的第一集为 26
          * @param episodeEp 在当前季度中的集数, 例如第二季的第一集为 01
+         * @param allowSingleFileFallback 是否允许在无法确认集数时使用唯一视频文件. 本机 BT
+         * 单文件资源可以启用；云端持久索引必须关闭，避免部分季度包索引直接播放错误集数.
          */
         fun <T> selectVideoFileEntry(
             entries: List<T>,
@@ -132,6 +134,7 @@ class TorrentMediaResolver(
             episodeSort: EpisodeSort,
             episodeEp: EpisodeSort?,
             videoExtensions: Set<String> = DEFAULT_VIDEO_EXTENSIONS,
+            allowSingleFileFallback: Boolean = true,
         ): T? {
             // Filter by file extension
             val videos = entries
@@ -186,13 +189,43 @@ class TorrentMediaResolver(
                 }?.key?.let { return it }
             }
 
-            // 解析失败, 尽可能匹配一个
-            episodeSort.toString().let { number ->
-                videos.firstOrNull { it.getPath().contains(number, ignoreCase = true) }
-                    ?.let { return it }
+            // Some release names encode an unnumbered special only as SP/OVA
+            // plus an optional suffix (for example OVA12), which RawTitleParser
+            // cannot always turn into the requested generic special. Preserve
+            // that useful fallback with explicit token boundaries; never apply
+            // it to normal numeric episodes where "1" would match "10".
+            val specialToken = episodeSort.toString()
+                .takeIf { episodeSort.number == null && it.all(Char::isLetter) }
+            if (specialToken != null) {
+                videos.firstOrNull {
+                    it.getPath().containsSpecialEpisodeToken(specialToken)
+                }?.let { return it }
             }
 
-            return videos.firstOrNull()
+            // A single playable file is safe to use: the selected torrent is
+            // itself the identity of that resource. With multiple videos,
+            // however, choosing by a raw substring ("1" matching "10") or
+            // falling back to the first entry silently plays the wrong episode.
+            // Let the caller surface a no-match error instead.
+            return if (allowSingleFileFallback) videos.singleOrNull() else null
+        }
+
+        private fun String.containsSpecialEpisodeToken(token: String): Boolean {
+            var startIndex = 0
+            while (startIndex <= length - token.length) {
+                val matchIndex = indexOf(token, startIndex, ignoreCase = true)
+                if (matchIndex < 0) return false
+
+                val previous = getOrNull(matchIndex - 1)
+                var endIndex = matchIndex + token.length
+                while (getOrNull(endIndex)?.isDigit() == true) endIndex++
+                val next = getOrNull(endIndex)
+                if (previous?.isLetterOrDigit() != true && next?.isLetter() != true) {
+                    return true
+                }
+                startIndex = matchIndex + 1
+            }
+            return false
         }
     }
 }

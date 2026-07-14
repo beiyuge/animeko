@@ -44,8 +44,9 @@ interface OfflineDownloadEngine {
      * folder. The engine asks [pickVideoFile] to choose one of the folder's
      * children by filename; implementations should supply the caller's normal
      * file-selection logic here (e.g. reuse upstream's
-     * `TorrentMediaResolver.selectVideoFileEntry`). Single-file torrents skip
-     * the callback entirely.
+     * `TorrentMediaResolver.selectVideoFileEntry`). Implementations may also
+     * call it for a single provider-side candidate so a stale or partially
+     * materialised season-pack index cannot bypass episode verification.
      *
      * Throws on failure; callers translate exceptions to domain-level
      * `MediaResolutionException`. Coroutine cancellation cancels the resolve

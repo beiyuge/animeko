@@ -43,12 +43,12 @@ internal class PikPakResolvedMediaCache {
         refresh: suspend (CachedPikPakFile) -> ResolvedMedia?,
     ): ResolvedMedia? {
         val candidates = sources[sourceKey] ?: return null
-        val selected = if (candidates.size == 1) {
-            candidates.single()
-        } else {
-            val selectedName = pickVideoFile(candidates.map { it.name }) ?: return null
-            candidates.firstOrNull { it.name == selectedName } ?: return null
-        }
+        // Always run the episode picker, even for a single indexed candidate.
+        // A season pack can temporarily expose only one candidate when the
+        // provider is still materialising or when its directory is nested; a
+        // cardinality shortcut would then silently play that unrelated episode.
+        val selectedName = pickVideoFile(candidates.map { it.name }) ?: return null
+        val selected = candidates.firstOrNull { it.name == selectedName } ?: return null
         return refresh(selected).also { resolved ->
             if (resolved == null) {
                 replace(sourceKey, candidates.filterNot { it.id == selected.id })

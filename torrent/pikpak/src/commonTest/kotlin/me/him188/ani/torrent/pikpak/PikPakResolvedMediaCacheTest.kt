@@ -9,12 +9,12 @@ import kotlinx.coroutines.test.runTest
 import me.him188.ani.torrent.offline.ResolvedMedia
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PikPakResolvedMediaCacheTest {
     @Test
-    fun `sole cached file is reused without filename parsing`() = runTest {
+    fun `sole cached file is rejected when episode picker cannot verify it`() = runTest {
         val cache = PikPakResolvedMediaCache()
         cache.replace(
             sourceKey = "source-1",
@@ -31,8 +31,8 @@ class PikPakResolvedMediaCacheTest {
             refresh = { ResolvedMedia(streamUrl = "https://cdn.example/fresh") },
         )
 
-        assertEquals("https://cdn.example/fresh", resolved?.streamUrl)
-        assertFalse(pickerCalled)
+        assertNull(resolved)
+        assertTrue(pickerCalled)
     }
 
     @Test

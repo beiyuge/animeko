@@ -11,6 +11,7 @@ package me.him188.ani.torrent.pikpak
 
 import io.github.nihildigit.pikpak.FileKind
 import io.github.nihildigit.pikpak.FileStat
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -21,6 +22,24 @@ import kotlin.test.assertTrue
  * translate directly to the wrong user-drive state.
  */
 class SlotEvictionPolicyTest {
+    @Test
+    fun `cloud candidate lookup traverses nested folders without duplicate files`() = runTest {
+        val episodeOne = file("Show S01E01.mkv", id = "ep-1")
+        val episodeTwo = file("Show S01E02.mkv", id = "ep-2")
+        val tree = mapOf(
+            "bucket" to listOf(folder("season", id = "season"), episodeOne),
+            "season" to listOf(folder("disc", id = "disc"), episodeOne),
+            "disc" to listOf(episodeTwo, folder("cycle", id = "bucket")),
+        )
+
+        val candidates = collectPikPakFileCandidates("bucket") { tree[it].orEmpty() }
+
+        assertEquals(
+            listOf("ep-1", "ep-2"),
+            candidates.map(CachedPikPakFile::id),
+        )
+    }
+
     @Test
     fun `durable source lookup includes duplicate case variants but never unrelated files`() {
         val upper = bucket("ABCDEF", "2026-01-01T00:00:00Z", id = "upper")
@@ -62,6 +81,18 @@ class SlotEvictionPolicyTest {
         name = name,
         kind = FileKind.FOLDER,
         createdTime = createdTime,
+    )
+
+    private fun folder(name: String, id: String) = FileStat(
+        id = id,
+        name = name,
+        kind = FileKind.FOLDER,
+    )
+
+    private fun file(name: String, id: String) = FileStat(
+        id = id,
+        name = name,
+        kind = FileKind.FILE,
     )
 
     // "current" = the source being resolved right now; must never be evicted.
