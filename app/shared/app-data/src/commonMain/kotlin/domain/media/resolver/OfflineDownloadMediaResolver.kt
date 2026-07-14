@@ -141,6 +141,9 @@ class OfflineDownloadMediaResolver(
             headers = emptyMap(),
             extraFiles = media.extraFiles.toMediampMediaExtraFiles(),
             mediaId = media.mediaId,
+            providerFileId = resolved.providerFileId,
+            fileSize = resolved.fileSize,
+            contentType = resolved.contentType,
             playbackCoordinator = playbackCoordinator,
         )
     }

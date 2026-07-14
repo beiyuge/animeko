@@ -21,6 +21,40 @@ import kotlin.test.assertTrue
  * translate directly to the wrong user-drive state.
  */
 class SlotEvictionPolicyTest {
+    @Test
+    fun `durable source lookup includes duplicate case variants but never unrelated files`() {
+        val upper = bucket("ABCDEF", "2026-01-01T00:00:00Z", id = "upper")
+        val lower = bucket("abcdef", "2026-01-02T00:00:00Z", id = "lower")
+        val unrelated = bucket("other", "2026-01-03T00:00:00Z", id = "other")
+        val sameNameFile = upper.copy(id = "file", kind = FileKind.FILE)
+
+        assertEquals(
+            listOf("upper", "lower"),
+            findSourceBuckets(listOf(upper, lower, unrelated, sameNameFile), "ABCDEF").map(FileStat::id),
+        )
+    }
+
+    @Test
+    fun `instant complete selects the entry created by the probe before an older bucket entry`() {
+        val existing = bucket("existing", "2026-07-14T12:00:00Z", id = "existing")
+        val landed = bucket("landed", "2026-07-14T11:00:00Z", id = "landed")
+
+        assertEquals(
+            "landed",
+            selectInstantCompleteEntry(listOf(existing, landed), setOf("existing"))?.id,
+        )
+    }
+
+    @Test
+    fun `instant complete falls back to newest entry when provider reuses an id`() {
+        val older = bucket("older", "2026-07-14T11:00:00Z", id = "older")
+        val refreshed = bucket("refreshed", "2026-07-14T12:00:00Z", id = "refreshed")
+
+        assertEquals(
+            "refreshed",
+            selectInstantCompleteEntry(listOf(older, refreshed), setOf("older", "refreshed"))?.id,
+        )
+    }
 
     /** Folder entry on the slot. Only `id`, `name`, `kind`, `createdTime` matter. */
     private fun bucket(name: String, createdTime: String, id: String = "id-$name") = FileStat(

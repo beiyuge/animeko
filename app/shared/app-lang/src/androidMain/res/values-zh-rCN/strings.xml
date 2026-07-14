@@ -72,12 +72,14 @@
     <string name="settings_media_torrent_allow_upload">允许 BT 上传</string>
     <string name="settings_media_torrent_allow_upload_disabled_description">仍可下载，但会严格禁止分片上传和自动做种。</string>
     <string name="pikpak_playback_authenticating">PikPak：正在登录…</string>
+    <string name="pikpak_playback_checking_cache">PikPak：正在检查云端缓存…</string>
     <string name="pikpak_playback_preparing">PikPak：正在准备云端目录…</string>
     <string name="pikpak_playback_submitting">PikPak：正在提交离线任务…</string>
     <string name="pikpak_playback_waiting">PikPak：正在等待云端下载…</string>
     <string name="pikpak_playback_downloading">PikPak：云端正在下载…</string>
     <string name="pikpak_playback_selecting">PikPak：正在选择剧集文件…</string>
     <string name="pikpak_playback_resolving_url">PikPak：正在获取播放地址…</string>
+    <string name="pikpak_playback_resolving_cached_url">已读取云端缓存，正在刷新播放地址…</string>
     <string name="pikpak_playback_cloud_cache_hit">已读取云端缓存</string>
     <string name="pikpak_playback_active">当前正在使用 PikPak 进行播放</string>
     <string name="pikpak_playback_failed">PikPak 解析失败</string>

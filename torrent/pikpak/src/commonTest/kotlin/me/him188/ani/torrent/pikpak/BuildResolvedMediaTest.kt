@@ -31,6 +31,7 @@ class BuildResolvedMediaTest {
         id: String = "f-123",
         name: String = "video.mp4",
         size: String = "12345",
+        mimeType: String = "video/mp4",
         octetStreamUrl: String = "",
         octetStreamExpire: String = "",
         webContentLink: String = "",
@@ -38,6 +39,7 @@ class BuildResolvedMediaTest {
         id = id,
         name = name,
         size = size,
+        mimeType = mimeType,
         webContentLink = webContentLink,
         links = FileDetail.Links(
             octetStream = DownloadLink(
@@ -106,6 +108,12 @@ class BuildResolvedMediaTest {
         val r = buildResolvedMedia(f)
         assertEquals("[Group] Episode 01.mkv", r.fileName)
         assertEquals("file-42", r.providerFileId)
+    }
+
+    @Test
+    fun `populates content type for the playback cache`() {
+        val resolved = buildResolvedMedia(fileDetail(octetStreamUrl = "https://x/y", mimeType = "video/x-matroska"))
+        assertEquals("video/x-matroska", resolved.contentType)
     }
 
     @Test

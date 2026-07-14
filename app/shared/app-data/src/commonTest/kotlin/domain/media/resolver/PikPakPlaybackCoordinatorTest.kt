@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -20,6 +21,26 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PikPakPlaybackCoordinatorTest {
+    @Test
+    fun `cached stream refresh marks the hit before playback starts`() = runTest {
+        val policy = LocalTorrentAccessPolicy(
+            MutableStateFlow(PikPakConfig.Default.copy(enabled = true)),
+            CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+        )
+        val coordinator = PikPakPlaybackCoordinator(policy)
+
+        coordinator.begin("episode-1")
+        coordinator.updateProgress("episode-1", OfflineDownloadProgress.CheckingCloudCache)
+        assertFalse(coordinator.state.value.cloudCacheHit)
+
+        coordinator.updateProgress("episode-1", OfflineDownloadProgress.ResolvingCachedStreamUrl)
+        assertTrue(coordinator.state.value.cloudCacheHit)
+        assertEquals(
+            PikPakPlaybackState.Status.Resolving(OfflineDownloadProgress.ResolvingCachedStreamUrl),
+            coordinator.state.value.status,
+        )
+    }
+
     @Test
     fun `retry count survives full re-resolution and fallback is one shot`() = runTest {
         val policy = LocalTorrentAccessPolicy(

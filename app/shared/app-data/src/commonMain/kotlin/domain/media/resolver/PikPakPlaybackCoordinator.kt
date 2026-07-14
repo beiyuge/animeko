@@ -50,7 +50,10 @@ class PikPakPlaybackCoordinator(
     fun updateProgress(mediaId: String, progress: OfflineDownloadProgress) {
         _state.update { current ->
             if (current.mediaId != mediaId) current
-            else current.copy(status = PikPakPlaybackState.Status.Resolving(progress))
+            else current.copy(
+                status = PikPakPlaybackState.Status.Resolving(progress),
+                cloudCacheHit = current.cloudCacheHit || progress is OfflineDownloadProgress.ResolvingCachedStreamUrl,
+            )
         }
     }
 

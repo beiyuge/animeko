@@ -12,8 +12,12 @@ internal actual fun createPikPakPlaybackTransportSession(
     uri: String,
     headers: Map<String, String>,
     extraFiles: MediaExtraFiles,
+    cacheKey: String,
+    contentLength: Long?,
+    contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
 ): PikPakPlaybackTransportSession = object : PikPakPlaybackTransportSession {
     override val mediaData = UriMediaData(uri, headers, extraFiles)
+    override fun updatePlaybackWindow(positionMillis: Long, durationMillis: Long) = Unit
     override fun close() = Unit
 }

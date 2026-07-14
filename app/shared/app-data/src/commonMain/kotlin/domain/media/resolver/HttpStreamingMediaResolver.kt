@@ -52,6 +52,9 @@ class PikPakStreamingMediaDataProvider(
     private val headers: Map<String, String> = emptyMap(),
     override val extraFiles: MediaExtraFiles = MediaExtraFiles.EMPTY,
     val mediaId: String,
+    private val providerFileId: String?,
+    private val fileSize: Long?,
+    private val contentType: String?,
     private val playbackCoordinator: PikPakPlaybackCoordinator? = null,
 ) : MediaDataProvider<UriMediaData>, PikPakBackedMediaDataProvider, ManagedMediaDataProvider {
     override val pikPakMediaId: String get() = mediaId
@@ -65,8 +68,15 @@ class PikPakStreamingMediaDataProvider(
             uri = uri,
             headers = headers,
             extraFiles = extraFiles,
+            cacheKey = providerFileId ?: mediaId,
+            contentLength = fileSize,
+            contentType = contentType,
             onTraffic = { speed, total -> coordinator.updateTraffic(mediaId, speed, total) },
         ).also { transportSession = it }.mediaData
+    }
+
+    fun updatePlaybackWindow(positionMillis: Long, durationMillis: Long) {
+        transportSession?.updatePlaybackWindow(positionMillis, durationMillis)
     }
 
     override fun closeProvider() {
@@ -84,11 +94,17 @@ interface ManagedMediaDataProvider {
 
 interface PikPakPlaybackTransportSession : AutoCloseable {
     val mediaData: UriMediaData
+
+    /** Updates the byte prefetch target using the player's real media timeline. */
+    fun updatePlaybackWindow(positionMillis: Long, durationMillis: Long)
 }
 
 internal expect fun createPikPakPlaybackTransportSession(
     uri: String,
     headers: Map<String, String>,
     extraFiles: MediaExtraFiles,
+    cacheKey: String,
+    contentLength: Long?,
+    contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
 ): PikPakPlaybackTransportSession

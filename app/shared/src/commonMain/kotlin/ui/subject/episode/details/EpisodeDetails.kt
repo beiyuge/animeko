@@ -124,12 +124,14 @@ import me.him188.ani.app.ui.lang.subject_episode_related_recommendations
 import me.him188.ani.app.ui.lang.subject_episode_select_media_source
 import me.him188.ani.app.ui.lang.subject_episode_wish_change_to
 import me.him188.ani.app.ui.lang.pikpak_playback_authenticating
+import me.him188.ani.app.ui.lang.pikpak_playback_checking_cache
 import me.him188.ani.app.ui.lang.pikpak_playback_preparing
 import me.him188.ani.app.ui.lang.pikpak_playback_submitting
 import me.him188.ani.app.ui.lang.pikpak_playback_waiting
 import me.him188.ani.app.ui.lang.pikpak_playback_downloading
 import me.him188.ani.app.ui.lang.pikpak_playback_selecting
 import me.him188.ani.app.ui.lang.pikpak_playback_resolving_url
+import me.him188.ani.app.ui.lang.pikpak_playback_resolving_cached_url
 import me.him188.ani.app.ui.lang.pikpak_playback_cloud_cache_hit
 import me.him188.ani.app.ui.lang.pikpak_playback_active
 import me.him188.ani.app.ui.lang.pikpak_playback_failed
@@ -825,6 +827,8 @@ internal fun PikPakPlaybackStatus(
                         when (status.progress) {
                             OfflineDownloadProgress.Idle,
                             OfflineDownloadProgress.Authenticating -> stringResource(Lang.pikpak_playback_authenticating)
+                            OfflineDownloadProgress.CheckingCloudCache ->
+                                stringResource(Lang.pikpak_playback_checking_cache)
                             OfflineDownloadProgress.PreparingStorage -> stringResource(Lang.pikpak_playback_preparing)
                             OfflineDownloadProgress.Submitting -> stringResource(Lang.pikpak_playback_submitting)
                             OfflineDownloadProgress.Waiting -> stringResource(Lang.pikpak_playback_waiting)
@@ -832,6 +836,8 @@ internal fun PikPakPlaybackStatus(
                             OfflineDownloadProgress.SelectingFile -> stringResource(Lang.pikpak_playback_selecting)
                             OfflineDownloadProgress.ResolvingStreamUrl,
                             OfflineDownloadProgress.Ready -> stringResource(Lang.pikpak_playback_resolving_url)
+                            OfflineDownloadProgress.ResolvingCachedStreamUrl ->
+                                stringResource(Lang.pikpak_playback_resolving_cached_url)
                         },
                         style = MaterialTheme.typography.labelLarge,
                     )

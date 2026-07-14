@@ -72,12 +72,14 @@
     <string name="settings_media_torrent_allow_upload">Allow BT uploads</string>
     <string name="settings_media_torrent_allow_upload_disabled_description">Downloading remains available, but piece uploads and automatic seeding are strictly disabled.</string>
     <string name="pikpak_playback_authenticating">PikPak: signing in…</string>
+    <string name="pikpak_playback_checking_cache">PikPak: checking cloud cache…</string>
     <string name="pikpak_playback_preparing">PikPak: preparing cloud storage…</string>
     <string name="pikpak_playback_submitting">PikPak: submitting offline task…</string>
     <string name="pikpak_playback_waiting">PikPak: waiting for the cloud download…</string>
     <string name="pikpak_playback_downloading">PikPak: downloading in the cloud…</string>
     <string name="pikpak_playback_selecting">PikPak: selecting the episode file…</string>
     <string name="pikpak_playback_resolving_url">PikPak: obtaining playback URL…</string>
+    <string name="pikpak_playback_resolving_cached_url">Loaded from cloud cache; refreshing playback URL…</string>
     <string name="pikpak_playback_cloud_cache_hit">Loaded from cloud cache</string>
     <string name="pikpak_playback_active">Currently playing through PikPak</string>
     <string name="pikpak_playback_failed">PikPak resolution failed</string>

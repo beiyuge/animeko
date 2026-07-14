@@ -12,10 +12,13 @@ package me.him188.ani.app.domain.episode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +32,7 @@ import me.him188.ani.app.domain.media.resolver.EpisodeMetadata
 import me.him188.ani.app.domain.media.resolver.MediaResolutionException
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.media.resolver.PikPakBackedMediaDataProvider
+import me.him188.ani.app.domain.media.resolver.PikPakStreamingMediaDataProvider
 import me.him188.ani.app.domain.media.resolver.ManagedMediaDataProvider
 import me.him188.ani.app.domain.media.resolver.MediaSourceOpenException
 import me.him188.ani.app.domain.media.resolver.OpenFailures
@@ -76,6 +80,7 @@ class PlayerSession(
 
     private var hlsPlaybackProxySession: HlsPlaybackProxySession? = null
     private var managedMediaDataProvider: ManagedMediaDataProvider? = null
+    private var pikPakPlaybackWindowJob: Job? = null
     @Volatile
     private var currentBackend: PlaybackBackend? = null
 
@@ -130,6 +135,17 @@ class PlayerSession(
             player.setMediaData(preparedData)
             hlsPlaybackProxySession = preparedHlsPlaybackProxySession
             preparedHlsPlaybackProxySession = null
+
+            if (source is PikPakStreamingMediaDataProvider) {
+                pikPakPlaybackWindowJob?.cancel()
+                pikPakPlaybackWindowJob = lifecycleScope.launch {
+                    combine(player.currentPositionMillis, player.mediaProperties) { position, properties ->
+                        position to (properties?.durationMillis ?: 0L)
+                    }.distinctUntilChanged().collect { (position, duration) ->
+                        source.updatePlaybackWindow(position, duration)
+                    }
+                }
+            }
 
             val backend = when (source) {
                 is TorrentBackedMediaDataProvider -> PlaybackBackend.LocalTorrent
@@ -190,6 +206,8 @@ class PlayerSession(
 
     suspend fun stopPlayback() {
         currentBackend = null
+        pikPakPlaybackWindowJob?.cancel()
+        pikPakPlaybackWindowJob = null
         stopPlayer()
         closeHlsPlaybackProxySession()
         closeManagedMediaDataProvider()
@@ -197,6 +215,8 @@ class PlayerSession(
 
     fun close() {
         currentBackend = null
+        pikPakPlaybackWindowJob?.cancel()
+        pikPakPlaybackWindowJob = null
         lifecycleScope.cancel()
         closeHlsPlaybackProxySession()
         closeManagedMediaDataProvider()

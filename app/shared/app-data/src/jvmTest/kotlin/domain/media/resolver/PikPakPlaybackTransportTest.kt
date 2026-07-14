@@ -15,6 +15,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -34,11 +35,17 @@ class PikPakPlaybackTransportTest {
             requests = CopyOnWriteArrayList(),
             bodyChunkDelayMillis = 1,
         )
-        val session = createPikPakPlaybackTransportSession(
+        val cacheRoot = Files.createTempDirectory("pikpak-reset-cache").toFile()
+        val session = createJvmPikPakPlaybackTransportSession(
             upstream.uri,
             mapOf("X-PikPak-Signature" to "signed"),
             MediaExtraFiles.EMPTY,
-        ) { _, _ -> }
+            cacheKey = "reset-${upstream.uri}",
+            contentLength = 4L * 1024L * 1024L,
+            contentType = "video/mp4",
+            onTraffic = { _, _ -> },
+            cacheStore = PikPakPlaybackCacheStore(cacheRoot),
+        )
         val uncaught = AtomicReference<Throwable>()
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { worker, throwable ->
@@ -67,6 +74,7 @@ class PikPakPlaybackTransportTest {
         } finally {
             session.close()
             upstream.close()
+            cacheRoot.deleteRecursively()
             Thread.setDefaultUncaughtExceptionHandler(previousHandler)
         }
     }
@@ -77,11 +85,17 @@ class PikPakPlaybackTransportTest {
         val requests = CopyOnWriteArrayList<Pair<String, String?>>()
         val upstream = TestRangeServer(payload, requests)
         val traffic = CopyOnWriteArrayList<Pair<Long, Long>>()
-        val session = createPikPakPlaybackTransportSession(
+        val cacheRoot = Files.createTempDirectory("pikpak-range-cache").toFile()
+        val session = createJvmPikPakPlaybackTransportSession(
             upstream.uri,
             mapOf("X-PikPak-Signature" to "signed"),
             MediaExtraFiles.EMPTY,
-        ) { speed, total -> traffic += speed to total }
+            cacheKey = "range-${upstream.uri}",
+            contentLength = payload.size.toLong(),
+            contentType = "video/mp4",
+            onTraffic = { speed, total -> traffic += speed to total },
+            cacheStore = PikPakPlaybackCacheStore(cacheRoot),
+        )
 
         try {
             val proxyUri = session.mediaData.uri
@@ -109,22 +123,120 @@ class PikPakPlaybackTransportTest {
             assertContentEquals(payload.copyOfRange(300, 400), concurrentResults[0])
             assertContentEquals(payload.copyOfRange(400, 550), concurrentResults[1])
 
-            run waitForTraffic@{
+            run waitForTraffic@ {
                 repeat(30) {
-                    if (traffic.any { it.second == 450L }) return@waitForTraffic
+                    if (traffic.any { it.second == payload.size.toLong() }) return@waitForTraffic
                     Thread.sleep(100)
                 }
             }
-            assertTrue(traffic.any { it.second == 450L }, "traffic=$traffic")
-            assertEquals(4, requests.size)
-            assertTrue(requests.contains("GET" to "bytes=100-299"))
-            assertTrue(requests.contains("HEAD" to null))
-            assertTrue(requests.contains("GET" to "bytes=300-399"))
-            assertTrue(requests.contains("GET" to "bytes=400-549"))
+            assertTrue(traffic.any { it.second == payload.size.toLong() }, "traffic=$traffic")
+            assertEquals(
+                listOf("GET" to "bytes=0-${payload.lastIndex}"),
+                requests.toList(),
+                "All requested ranges fit in the same cached block and must only read upstream once",
+            )
         } finally {
             session.close()
             upstream.close()
+            cacheRoot.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `preloads only the next fifteen minutes using the real player timeline`() {
+        val payload = ByteArray(1024 * 1024) { (it % 251).toByte() }
+        val requests = CopyOnWriteArrayList<Pair<String, String?>>()
+        val upstream = TestRangeServer(payload, requests)
+        val cacheRoot = Files.createTempDirectory("pikpak-prefetch-cache").toFile()
+        val cacheKey = "prefetch-${upstream.uri}"
+        val store = PikPakPlaybackCacheStore(cacheRoot, blockSize = 64 * 1024)
+        val session = createJvmPikPakPlaybackTransportSession(
+            uri = upstream.uri,
+            headers = mapOf("X-PikPak-Signature" to "signed"),
+            extraFiles = MediaExtraFiles.EMPTY,
+            cacheKey = cacheKey,
+            contentLength = payload.size.toLong(),
+            contentType = "video/mp4",
+            onTraffic = { _, _ -> },
+            cacheStore = store,
+        )
+
+        try {
+            session.updatePlaybackWindow(positionMillis = 0L, durationMillis = 60L * 60L * 1000L)
+            run waitForPrefetch@ {
+                repeat(100) {
+                    if (store.cachedBytesFor(cacheKey) >= payload.size / 4L) return@waitForPrefetch
+                    Thread.sleep(20L)
+                }
+            }
+            assertEquals(payload.size / 4L, store.cachedBytesFor(cacheKey))
+            assertEquals(4, requests.size, "A 15-minute window of a 60-minute file is exactly one quarter")
+
+            val requestCount = requests.size
+            val cachedRange = (URI.create(session.mediaData.uri).toURL().openConnection() as HttpURLConnection).apply {
+                setRequestProperty("Range", "bytes=200000-200999")
+            }
+            assertEquals(206, cachedRange.responseCode)
+            assertContentEquals(payload.copyOfRange(200000, 201000), cachedRange.inputStream.readBytes())
+            assertEquals(requestCount, requests.size, "A range inside the preloaded window must not hit PikPak again")
+        } finally {
+            session.close()
+            upstream.close()
+            cacheRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `oversized episode cache is temporary and removed when playback closes`() {
+        val cacheRoot = Files.createTempDirectory("pikpak-oversized-cache").toFile()
+        val store = PikPakPlaybackCacheStore(cacheRoot, maxBytes = 8L, blockSize = 4)
+        val entry = store.open("oversized", fileSize = 12L, contentType = "video/mp4")!!
+        repeat(entry.blockCount) { block ->
+            entry.getOrFetch(block) { start, end -> ByteArray((end - start + 1L).toInt()) }
+        }
+        assertEquals(12L, store.cachedBytesFor("oversized"))
+
+        entry.close()
+
+        assertEquals(0L, store.cachedBytesFor("oversized"))
+        cacheRoot.deleteRecursively()
+    }
+
+    @Test
+    fun `normal episode caches evict least recently used entries at the global limit`() {
+        val cacheRoot = Files.createTempDirectory("pikpak-quota-cache").toFile()
+        val store = PikPakPlaybackCacheStore(cacheRoot, maxBytes = 8L, blockSize = 4)
+        store.open("older", fileSize = 8L, contentType = null)!!.use { entry ->
+            repeat(entry.blockCount) { block ->
+                entry.getOrFetch(block) { start, end -> ByteArray((end - start + 1L).toInt()) }
+            }
+        }
+        store.open("newer", fileSize = 8L, contentType = null)!!.use { entry ->
+            repeat(entry.blockCount) { block ->
+                entry.getOrFetch(block) { start, end -> ByteArray((end - start + 1L).toInt()) }
+            }
+            assertEquals(0L, store.cachedBytesFor("older"))
+            assertEquals(8L, store.cachedBytesFor("newer"))
+        }
+        cacheRoot.deleteRecursively()
+    }
+
+    @Test
+    fun `normal episode blocks survive store recreation`() {
+        val cacheRoot = Files.createTempDirectory("pikpak-persistent-cache").toFile()
+        PikPakPlaybackCacheStore(cacheRoot, maxBytes = 16L, blockSize = 4)
+            .open("persistent", fileSize = 8L, contentType = "video/mp4")!!
+            .use { entry ->
+                entry.getOrFetch(0) { start, end -> ByteArray((end - start + 1L).toInt()) { 7 } }
+            }
+
+        val reopened = PikPakPlaybackCacheStore(cacheRoot, maxBytes = 16L, blockSize = 4)
+            .open("persistent", fileSize = 8L, contentType = "video/mp4")!!
+        val cached = reopened.getOrFetch(0) { _, _ -> error("Persistent block should not be downloaded again") }
+
+        assertContentEquals(ByteArray(4) { 7 }, cached)
+        reopened.close()
+        cacheRoot.deleteRecursively()
     }
 
     private class TestRangeServer(

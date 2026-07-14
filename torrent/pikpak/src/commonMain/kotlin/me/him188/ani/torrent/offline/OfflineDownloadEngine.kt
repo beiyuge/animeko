@@ -60,12 +60,16 @@ interface OfflineDownloadEngine {
 sealed interface OfflineDownloadProgress {
     data object Idle : OfflineDownloadProgress
     data object Authenticating : OfflineDownloadProgress
+    /** Checking Animeko's durable provider-side index before creating a task. */
+    data object CheckingCloudCache : OfflineDownloadProgress
     data object PreparingStorage : OfflineDownloadProgress
     data object Submitting : OfflineDownloadProgress
     data object Waiting : OfflineDownloadProgress
     data class Downloading(val fraction: Float?) : OfflineDownloadProgress
     data object SelectingFile : OfflineDownloadProgress
     data object ResolvingStreamUrl : OfflineDownloadProgress
+    /** A provider-side file was found and only its expiring playback URL is being refreshed. */
+    data object ResolvingCachedStreamUrl : OfflineDownloadProgress
     data object Ready : OfflineDownloadProgress
 }
 
@@ -90,6 +94,7 @@ data class ResolvedMedia(
     val expiresAt: Instant? = null,
     val fileName: String? = null,
     val fileSize: Long? = null,
+    val contentType: String? = null,
     val isCloudCacheHit: Boolean = false,
     /**
      * Provider-side file identifier, if any. Surfaced so callers (and tests)

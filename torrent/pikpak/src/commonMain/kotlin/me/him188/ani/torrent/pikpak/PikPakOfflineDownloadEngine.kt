@@ -186,6 +186,7 @@ class PikPakOfflineDownloadEngine(
             client.login()
 
             val sourceKey = sourceKeyFor(uri)
+            _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
             resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { cached ->
                 logger.info { "[pikpak] memory cache hit: bucket=$sourceKey file=${cached.providerFileId}" }
                 return@withTimeout cached
@@ -207,7 +208,7 @@ class PikPakOfflineDownloadEngine(
             //     of every "VLC is unable to open MRL" we hit).
             //   * Season-pack siblings don't linger; the old pack folder is
             //     cascade-deleted before the new task is submitted.
-            _resolutionProgress.value = OfflineDownloadProgress.PreparingStorage
+            _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
             val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
 
             // Per-source sub-folder: every magnet / .torrent URL gets its own
@@ -219,13 +220,15 @@ class PikPakOfflineDownloadEngine(
             // and the user opened SPY×FAMILY E02; the filename's "02" pattern
             // matched and we handed back the wrong show).
             val topEntries = client.listFiles(parentId = slotId)
-            val myBucket = topEntries.firstOrNull { it.name == sourceKey }
+            val matchingBuckets = findSourceBuckets(topEntries, sourceKey)
 
             // Slot-hit fast path: we only reuse when the bucket belongs to
             // *this exact source*. pickVideoFile still runs inside the bucket
             // to pick the right episode out of a cached season pack.
-            if (myBucket != null) {
-                val cached = collectSlotCandidates(client, myBucket.id)
+            if (matchingBuckets.isNotEmpty()) {
+                val cached = matchingBuckets
+                    .flatMap { collectSlotCandidates(client, it.id) }
+                    .distinctBy(CachedPikPakFile::id)
                 resolvedMediaCache.replace(sourceKey, cached)
                 resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { hit ->
                     logger.info { "[pikpak] slot hit: bucket=$sourceKey file=${hit.providerFileId}" }
@@ -248,19 +251,30 @@ class PikPakOfflineDownloadEngine(
             // Ensure this source's bucket exists, and submit the task *into
             // it*. PikPak lands everything from the task under parent_id, so
             // a season pack's pack-folder + children all sit inside the bucket.
-            val bucketId = myBucket?.id
-                ?: client.getOrCreateDeepFolderId(parentId = "", path = "$slotFolderName/$sourceKey")
+            val bucketId = matchingBuckets.firstOrNull()?.id ?: run {
+                _resolutionProgress.value = OfflineDownloadProgress.PreparingStorage
+                client.getOrCreateDeepFolderId(parentId = "", path = "$slotFolderName/$sourceKey")
+            }
 
             // Track the latest root id we've seen — used for failure cleanup
             // only. On success, the task's result sits in the bucket for the
             // next resolve() to either hit or drain.
             var failureCleanupId: String? = null
+            var cloudCacheHit = false
 
             try {
-                _resolutionProgress.value = OfflineDownloadProgress.Submitting
-                logger.info { "[pikpak] submit offline task for ${uri.take(60)}... bucket=$sourceKey" }
+                // createUrlFile is also PikPak's only exact, provider-wide cache
+                // probe for a magnet. The SDK has no infohash search endpoint;
+                // filename search would risk matching the wrong show. An
+                // InstantComplete result means PikPak already had the content,
+                // while Queued is the point at which this becomes a real task.
+                _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
+                logger.info { "[pikpak] probe provider cache for ${uri.take(60)}... bucket=$sourceKey" }
+                val bucketEntryIdsBeforeProbe = client.listFiles(parentId = bucketId)
+                    .mapTo(mutableSetOf()) { it.id }
                 val fileId = when (val result = client.createUrlFile(parentId = bucketId, url = uri)) {
                     is CreateUrlResult.Queued -> {
+                        _resolutionProgress.value = OfflineDownloadProgress.Submitting
                         val task = result.task
                         logger.debug {
                             "[pikpak] submitted task id=${task.id} file_id=${task.fileId} file_name=${task.fileName}"
@@ -275,14 +289,16 @@ class PikPakOfflineDownloadEngine(
                     }
                     // PikPak recognised the URL's content as already cached on
                     // their side and dropped the file straight into our bucket
-                    // without queuing a task. The bucket is per-source, so the
-                    // newest entry by createdTime is ours.
+                    // without queuing a task. Prefer the entry that appeared
+                    // after the atomic probe; the newest-entry fallback covers
+                    // providers that reuse an existing id while refreshing it.
                     CreateUrlResult.InstantComplete -> {
+                        cloudCacheHit = true
                         logger.info {
                             "[pikpak] instant-complete for bucket=$sourceKey; recovering landed file from bucket listing"
                         }
-                        val landed = client.listFiles(parentId = bucketId)
-                            .maxByOrNull { it.createdTime }
+                        val landedEntries = client.listFiles(parentId = bucketId)
+                        val landed = selectInstantCompleteEntry(landedEntries, bucketEntryIdsBeforeProbe)
                             ?: throw OfflineDownloadRejectedException(
                                 "PikPak reported instant-complete but bucket $sourceKey is empty after submission",
                             )
@@ -307,7 +323,7 @@ class PikPakOfflineDownloadEngine(
                 }
                 resolvedMediaCache.replace(sourceKey, candidates)
 
-                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = false)
+                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = cloudCacheHit)
                     ?: throw OfflineDownloadRejectedException(
                         "PikPak resource $sourceKey contains no cached playable file " +
                                 "(files: ${candidates.joinToString(limit = 10) { it.name }})",
@@ -364,7 +380,11 @@ class PikPakOfflineDownloadEngine(
         }
         if (detail.trashed || detail.id.isEmpty()) return@resolve null
         try {
-            _resolutionProgress.value = OfflineDownloadProgress.ResolvingStreamUrl
+            _resolutionProgress.value = if (isCloudCacheHit) {
+                OfflineDownloadProgress.ResolvingCachedStreamUrl
+            } else {
+                OfflineDownloadProgress.ResolvingStreamUrl
+            }
             buildResolvedMedia(detail).copy(isCloudCacheHit = isCloudCacheHit).also {
                 _resolutionProgress.value = OfflineDownloadProgress.Ready
             }
@@ -474,6 +494,7 @@ internal fun buildResolvedMedia(file: FileDetail): ResolvedMedia {
         expiresAt = expiresAt,
         fileName = file.name.takeIf { it.isNotEmpty() },
         fileSize = file.size.toLongOrNull(),
+        contentType = file.mimeType.takeIf { it.isNotEmpty() },
         providerFileId = file.id.takeIf { it.isNotEmpty() },
     )
 }
@@ -506,6 +527,15 @@ internal fun sourceKeyFor(uri: String): String {
     if (canonical != null) return canonical
     return "h-" + sha256HexShort(uri)
 }
+
+/** Returns every durable bucket for this exact source, including legacy case variants. */
+internal fun findSourceBuckets(topEntries: List<FileStat>, sourceKey: String): List<FileStat> =
+    topEntries.filter { it.isFolder && it.name.equals(sourceKey, ignoreCase = true) }
+
+/** Selects the file produced by an InstantComplete probe without confusing it with an older bucket entry. */
+internal fun selectInstantCompleteEntry(entries: List<FileStat>, idsBeforeProbe: Set<String>): FileStat? =
+    entries.filterNot { it.id in idsBeforeProbe }.maxByOrNull { it.createdTime }
+        ?: entries.maxByOrNull { it.createdTime }
 
 private fun canonicalizeBtih(raw: String): String? {
     val upper = raw.uppercase()
