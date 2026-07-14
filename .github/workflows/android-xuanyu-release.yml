@@ -135,13 +135,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Animeko ${{ github.ref_name }}
           body: |
-            Animeko xuanyu 定制版（Android 与桌面端）。
+            Animeko xuanyu 定制版（Android 单独版本）。
 
             - 版本：${{ github.ref_name }}
             - 包名：me.him188.ani.xuanyu
             - APK 已由 GitHub Actions 使用 xyla 发布证书签名并校验。
             - `universal` 适用于大多数设备，其余文件按 CPU 架构选择。
-            - 桌面端制品由独立的 Desktop Xuanyu Release 工作流追加到本 Release。
           files: release/*
           fail_on_unmatched_files: true
           draft: false

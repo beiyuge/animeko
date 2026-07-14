@@ -12,6 +12,7 @@ package me.him188.ani.torrent.pikpak
 import io.github.nihildigit.pikpak.FileKind
 import io.github.nihildigit.pikpak.FileStat
 import kotlinx.coroutines.test.runTest
+import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -22,6 +23,18 @@ import kotlin.test.assertTrue
  * translate directly to the wrong user-drive state.
  */
 class SlotEvictionPolicyTest {
+    @Test
+    fun `cached file validation remains in cache-checking state until cache hit is reported`() {
+        assertEquals(
+            OfflineDownloadProgress.CheckingCloudCache,
+            progressWhileSelectingFile(isCloudCacheHit = true),
+        )
+        assertEquals(
+            OfflineDownloadProgress.SelectingFile,
+            progressWhileSelectingFile(isCloudCacheHit = false),
+        )
+    }
+
     @Test
     fun `cloud candidate lookup traverses nested folders without duplicate files`() = runTest {
         val episodeOne = file("Show S01E01.mkv", id = "ep-1")

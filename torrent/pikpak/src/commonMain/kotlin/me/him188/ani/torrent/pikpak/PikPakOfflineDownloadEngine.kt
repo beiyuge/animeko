@@ -307,7 +307,7 @@ class PikPakOfflineDownloadEngine(
                 }
                 failureCleanupId = fileId
 
-                _resolutionProgress.value = OfflineDownloadProgress.SelectingFile
+                _resolutionProgress.value = progressWhileSelectingFile(cloudCacheHit)
                 val rootInfo = client.getFile(fileId)
                 if (rootInfo.id.isNotEmpty()) failureCleanupId = rootInfo.id
 
@@ -361,7 +361,7 @@ class PikPakOfflineDownloadEngine(
         pickVideoFile: (candidateFilenames: List<String>) -> String?,
         isCloudCacheHit: Boolean,
     ): ResolvedMedia? = resolvedMediaCache.resolve(sourceKey, pickVideoFile) { cachedFile ->
-        _resolutionProgress.value = OfflineDownloadProgress.SelectingFile
+        _resolutionProgress.value = progressWhileSelectingFile(isCloudCacheHit)
         val detail = try {
             client.getFile(cachedFile.id)
         } catch (e: CancellationException) {
@@ -528,6 +528,18 @@ internal fun findSourceBuckets(topEntries: List<FileStat>, sourceKey: String): L
 internal fun selectInstantCompleteEntry(entries: List<FileStat>, idsBeforeProbe: Set<String>): FileStat? =
     entries.filterNot { it.id in idsBeforeProbe }.maxByOrNull { it.createdTime }
         ?: entries.maxByOrNull { it.createdTime }
+
+/**
+ * Cache-hit paths still validate the selected file id before refreshing its signed URL. Keep that
+ * validation under the cache-checking phase so the UI cannot misleadingly report normal parsing
+ * before it announces the cloud-cache hit.
+ */
+internal fun progressWhileSelectingFile(isCloudCacheHit: Boolean): OfflineDownloadProgress =
+    if (isCloudCacheHit) {
+        OfflineDownloadProgress.CheckingCloudCache
+    } else {
+        OfflineDownloadProgress.SelectingFile
+    }
 
 /** Collects every file below [rootId], guarding against duplicate ids and malformed folder cycles. */
 internal suspend fun collectPikPakFileCandidates(

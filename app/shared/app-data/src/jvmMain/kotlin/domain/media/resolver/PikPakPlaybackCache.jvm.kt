@@ -5,6 +5,9 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import androidx.collection.MutableFloatList
+import me.him188.ani.app.domain.media.player.ChunkState
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -13,6 +16,7 @@ import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 
 /**
@@ -148,6 +152,7 @@ internal class PikPakPlaybackCacheStore(
         private val blockLocks = ConcurrentHashMap<Int, Any>()
         private val lifecycleLock = ReentrantLock()
         private val operationsDrained = lifecycleLock.newCondition()
+        private val storedBlockVersion = AtomicLong(0L)
         private var closed = false
         private var activeOperations = 0
 
@@ -159,6 +164,48 @@ internal class PikPakPlaybackCacheStore(
 
         fun blockLength(blockIndex: Int): Int =
             minOf(blockSize.toLong(), fileSize - blockStart(blockIndex)).coerceAtLeast(0L).toInt()
+
+        val progressVersion: Long get() = storedBlockVersion.get()
+
+        /** Returns compact byte-weighted runs matching the blocks persisted in this entry. */
+        fun snapshotProgressInfo(): MediaCacheProgressInfo {
+            if (blockCount == 0) return MediaCacheProgressInfo.Empty
+
+            val storedBlocks = ByteArray(blockCount)
+            if (bitmapFile.isFile) {
+                FileInputStream(bitmapFile).use { input ->
+                    var offset = 0
+                    while (offset < storedBlocks.size) {
+                        val count = input.read(storedBlocks, offset, storedBlocks.size - offset)
+                        if (count < 0) break
+                        offset += count
+                    }
+                }
+            }
+
+            val weights = MutableFloatList()
+            val states = ArrayList<ChunkState>()
+            var runStored = storedBlocks[0].toInt() == 1
+            var runBytes = blockLength(0).toLong()
+
+            fun appendRun() {
+                weights.add(runBytes.toFloat() / fileSize.toFloat())
+                states += if (runStored) ChunkState.DONE else ChunkState.NONE
+            }
+
+            for (blockIndex in 1 until blockCount) {
+                val stored = storedBlocks[blockIndex].toInt() == 1
+                if (stored == runStored) {
+                    runBytes += blockLength(blockIndex)
+                } else {
+                    appendRun()
+                    runStored = stored
+                    runBytes = blockLength(blockIndex).toLong()
+                }
+            }
+            appendRun()
+            return MediaCacheProgressInfo(weights, states)
+        }
 
         fun getOrFetch(blockIndex: Int, fetch: (start: Long, endInclusive: Long) -> ByteArray): ByteArray {
             require(blockIndex in 0 until blockCount)
@@ -184,6 +231,7 @@ internal class PikPakPlaybackCacheStore(
                         bitmap.seek(blockIndex.toLong())
                         bitmap.write(1)
                     }
+                    storedBlockVersion.incrementAndGet()
                     touch()
                     store.onBlockStored()
                     return bytes

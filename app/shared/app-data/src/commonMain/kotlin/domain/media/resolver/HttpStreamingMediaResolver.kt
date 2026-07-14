@@ -10,6 +10,7 @@
 package me.him188.ani.app.domain.media.resolver
 
 import kotlinx.coroutines.CoroutineScope
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.topic.ResourceLocation
@@ -72,6 +73,7 @@ class PikPakStreamingMediaDataProvider(
             contentLength = fileSize,
             contentType = contentType,
             onTraffic = { speed, total -> coordinator.updateTraffic(mediaId, speed, total) },
+            onCacheProgress = { progress -> coordinator.updateCacheProgress(mediaId, progress) },
         ).also { transportSession = it }.mediaData
     }
 
@@ -107,4 +109,5 @@ internal expect fun createPikPakPlaybackTransportSession(
     contentLength: Long?,
     contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
+    onCacheProgress: (MediaCacheProgressInfo) -> Unit,
 ): PikPakPlaybackTransportSession

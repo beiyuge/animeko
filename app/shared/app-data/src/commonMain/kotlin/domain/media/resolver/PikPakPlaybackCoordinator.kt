@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.torrent.offline.OfflineDownloadProgress
 
@@ -17,6 +18,7 @@ data class PikPakPlaybackState(
     val status: Status = Status.Idle,
     val failureCount: Int = 0,
     val cloudCacheHit: Boolean = false,
+    val cacheProgressInfo: MediaCacheProgressInfo = MediaCacheProgressInfo.Empty,
     val downloadBytesPerSecond: Long = 0,
     val downloadedBytes: Long = 0,
 ) {
@@ -86,6 +88,13 @@ class PikPakPlaybackCoordinator(
                 downloadBytesPerSecond = bytesPerSecond.coerceAtLeast(0),
                 downloadedBytes = downloadedBytes.coerceAtLeast(0),
             )
+        }
+    }
+
+    fun updateCacheProgress(mediaId: String, progressInfo: MediaCacheProgressInfo) {
+        _state.update { current ->
+            if (current.mediaId != mediaId || current.status !is PikPakPlaybackState.Status.Playing) current
+            else current.copy(cacheProgressInfo = progressInfo)
         }
     }
 

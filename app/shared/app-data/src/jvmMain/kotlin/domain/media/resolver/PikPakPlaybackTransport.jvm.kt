@@ -5,6 +5,7 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import org.openani.mediamp.source.MediaExtraFiles
 import org.openani.mediamp.source.UriMediaData
 import java.io.BufferedReader
@@ -38,6 +39,7 @@ internal actual fun createPikPakPlaybackTransportSession(
     contentLength: Long?,
     contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
+    onCacheProgress: (MediaCacheProgressInfo) -> Unit,
 ): PikPakPlaybackTransportSession = createJvmPikPakPlaybackTransportSession(
     uri = uri,
     headers = headers,
@@ -46,6 +48,7 @@ internal actual fun createPikPakPlaybackTransportSession(
     contentLength = contentLength,
     contentType = contentType,
     onTraffic = onTraffic,
+    onCacheProgress = onCacheProgress,
     cacheStore = DefaultPikPakPlaybackCacheStore,
 )
 
@@ -57,6 +60,7 @@ internal fun createJvmPikPakPlaybackTransportSession(
     contentLength: Long?,
     contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
+    onCacheProgress: (MediaCacheProgressInfo) -> Unit = {},
     cacheStore: PikPakPlaybackCacheStore,
 ): PikPakPlaybackTransportSession = JvmPikPakPlaybackTransportSession(
     upstreamUri = uri,
@@ -66,6 +70,7 @@ internal fun createJvmPikPakPlaybackTransportSession(
     contentLength = contentLength,
     contentType = contentType,
     onTraffic = onTraffic,
+    onCacheProgress = onCacheProgress,
     cacheStore = cacheStore,
 )
 
@@ -77,6 +82,7 @@ private class JvmPikPakPlaybackTransportSession(
     private val contentLength: Long?,
     private val contentType: String?,
     private val onTraffic: (Long, Long) -> Unit,
+    private val onCacheProgress: (MediaCacheProgressInfo) -> Unit,
     cacheStore: PikPakPlaybackCacheStore,
 ) : PikPakPlaybackTransportSession {
     private val closed = AtomicBoolean(false)
@@ -84,11 +90,16 @@ private class JvmPikPakPlaybackTransportSession(
     private val activeConnections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
     private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
     private val cacheEntry = contentLength?.let { cacheStore.open(cacheKey, it, contentType) }
+    private var publishedCacheProgressVersion = Long.MIN_VALUE
     private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     private val prefetchStart = AtomicLong(-1L)
     private val prefetchEndExclusive = AtomicLong(-1L)
     private val prefetchGeneration = AtomicLong(0L)
     private val prefetchSignal = Semaphore(0)
+
+    init {
+        publishCacheProgress()
+    }
 
     override val mediaData = UriMediaData(
         "http://127.0.0.1:${server.localPort}/pikpak-media",
@@ -186,6 +197,7 @@ private class JvmPikPakPlaybackTransportSession(
                 if (prefetchGeneration.get() != generation) break
                 try {
                     entry.getOrFetch(block, ::fetchBlock)
+                    publishCacheProgress()
                 } catch (_: InterruptedException) {
                     return
                 } catch (_: IOException) {
@@ -259,12 +271,29 @@ private class JvmPikPakPlaybackTransportSession(
         while (position <= range.endInclusive && !closed.get()) {
             val blockIndex = (position / entry.blockSize).toInt()
             val block = entry.getOrFetch(blockIndex, ::fetchBlock)
+            publishCacheProgress()
             val offset = (position - entry.blockStart(blockIndex)).toInt()
             val count = minOf(block.size - offset, (range.endInclusive - position + 1L).toInt())
             output.write(block, offset, count)
             position += count
         }
         output.flush()
+    }
+
+    @Synchronized
+    private fun publishCacheProgress() {
+        val entry = cacheEntry
+        if (entry == null) {
+            if (publishedCacheProgressVersion == Long.MIN_VALUE) {
+                publishedCacheProgressVersion = 0L
+                onCacheProgress(MediaCacheProgressInfo.Empty)
+            }
+            return
+        }
+        val version = entry.progressVersion
+        if (publishedCacheProgressVersion == version) return
+        onCacheProgress(entry.snapshotProgressInfo())
+        publishedCacheProgressVersion = version
     }
 
     private fun serveUncached(socket: Socket, method: String, requestHeaders: Map<String, String>) {

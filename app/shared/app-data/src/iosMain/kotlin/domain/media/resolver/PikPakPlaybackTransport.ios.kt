@@ -5,6 +5,7 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import org.openani.mediamp.source.MediaExtraFiles
 import org.openani.mediamp.source.UriMediaData
 
@@ -16,6 +17,7 @@ internal actual fun createPikPakPlaybackTransportSession(
     contentLength: Long?,
     contentType: String?,
     onTraffic: (bytesPerSecond: Long, downloadedBytes: Long) -> Unit,
+    onCacheProgress: (MediaCacheProgressInfo) -> Unit,
 ): PikPakPlaybackTransportSession = object : PikPakPlaybackTransportSession {
     override val mediaData = UriMediaData(uri, headers, extraFiles)
     override fun updatePlaybackWindow(positionMillis: Long, durationMillis: Long) = Unit

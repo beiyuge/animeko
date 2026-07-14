@@ -5,12 +5,15 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import androidx.collection.floatListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import me.him188.ani.app.data.models.preference.PikPakConfig
+import me.him188.ani.app.domain.media.player.ChunkState
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import kotlin.test.Test
@@ -21,6 +24,30 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PikPakPlaybackCoordinatorTest {
+    @Test
+    fun `playback cache progress is scoped to the active PikPak media`() = runTest {
+        val policy = LocalTorrentAccessPolicy(
+            MutableStateFlow(PikPakConfig.Default.copy(enabled = true)),
+            CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+        )
+        val coordinator = PikPakPlaybackCoordinator(policy)
+        val cachedRange = MediaCacheProgressInfo(
+            chunkWeights = floatListOf(0.25f, 0.5f, 0.25f),
+            chunkStates = listOf(ChunkState.NONE, ChunkState.DONE, ChunkState.NONE),
+        )
+
+        coordinator.begin("episode-1")
+        coordinator.playing("episode-1")
+        coordinator.updateCacheProgress("episode-2", cachedRange)
+        assertEquals(MediaCacheProgressInfo.Empty, coordinator.state.value.cacheProgressInfo)
+
+        coordinator.updateCacheProgress("episode-1", cachedRange)
+        assertEquals(cachedRange, coordinator.state.value.cacheProgressInfo)
+
+        coordinator.reset("episode-1")
+        assertEquals(MediaCacheProgressInfo.Empty, coordinator.state.value.cacheProgressInfo)
+    }
+
     @Test
     fun `cached stream refresh marks the hit before playback starts`() = runTest {
         val policy = LocalTorrentAccessPolicy(

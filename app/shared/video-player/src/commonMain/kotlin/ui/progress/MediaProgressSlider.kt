@@ -288,35 +288,6 @@ fun MediaProgressSlider(
             }
 
             Canvas(Modifier.matchParentSize()) {
-                // draw cached progress
-                val snapshotCacheProgress = cacheProgressInfoFlow() ?: return@Canvas // ignore initial state
-
-                var currentX = 0f
-
-                // 连续的缓存区块连着画, 否则会因精度缺失导致不连续
-                forEachConsecutiveChunk(snapshotCacheProgress) { state, weight ->
-                    val color = when (state) {
-                        ChunkState.NONE -> Color.Unspecified
-                        ChunkState.DOWNLOADING -> colors.downloadingColor
-                        ChunkState.DONE -> colors.cachedProgressColor
-                        ChunkState.NOT_AVAILABLE -> colors.notAvailableColor
-                    }
-                    if (color != Color.Unspecified) {
-                        val size = Size(
-                            weight * size.width,
-                            size.height,
-                        )// TODO: draw more cache states (colors)
-                        drawRect(
-                            color,
-                            topLeft = Offset(currentX, 0f),
-                            size = size,
-                        )
-                    }
-                    currentX += weight * size.width
-                }
-            }
-
-            Canvas(Modifier.matchParentSize()) {
                 // draw play progress
                 val xPlay = size.width * state.displayPositionRatio
 
@@ -351,6 +322,35 @@ fun MediaProgressSlider(
 //                    size = Size(gapWidthEach + thumbWidth / 2, size.height),
 //                    blendMode = BlendMode.Src, // override
 //                )
+            }
+
+            Canvas(Modifier.matchParentSize()) {
+                // Draw cache after play progress so completed ranges behind the playhead stay visible.
+                val snapshotCacheProgress = cacheProgressInfoFlow() ?: return@Canvas // ignore initial state
+
+                var currentX = 0f
+
+                // 连续的缓存区块连着画, 否则会因精度缺失导致不连续
+                forEachConsecutiveChunk(snapshotCacheProgress) { state, weight ->
+                    val color = when (state) {
+                        ChunkState.NONE -> Color.Unspecified
+                        ChunkState.DOWNLOADING -> colors.downloadingColor
+                        ChunkState.DONE -> colors.cachedProgressColor
+                        ChunkState.NOT_AVAILABLE -> colors.notAvailableColor
+                    }
+                    if (color != Color.Unspecified) {
+                        val size = Size(
+                            weight * size.width,
+                            size.height,
+                        )// TODO: draw more cache states (colors)
+                        drawRect(
+                            color,
+                            topLeft = Offset(currentX, 0f),
+                            size = size,
+                        )
+                    }
+                    currentX += weight * size.width
+                }
             }
 
             Canvas(Modifier.matchParentSize()) {

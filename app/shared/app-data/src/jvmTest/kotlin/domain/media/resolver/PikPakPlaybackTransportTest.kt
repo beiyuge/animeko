@@ -5,6 +5,8 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import me.him188.ani.app.domain.media.player.ChunkState
+import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import org.openani.mediamp.source.MediaExtraFiles
 import java.io.BufferedReader
 import java.io.IOException
@@ -28,6 +30,56 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PikPakPlaybackTransportTest {
+    @Test
+    fun `cached ranges are reported and backward reads do not hit PikPak again`() {
+        val payload = ByteArray(16) { it.toByte() }
+        val requests = CopyOnWriteArrayList<Pair<String, String?>>()
+        val upstream = TestRangeServer(payload, requests)
+        val cacheRoot = Files.createTempDirectory("pikpak-visible-cache").toFile()
+        val progress = CopyOnWriteArrayList<MediaCacheProgressInfo>()
+        val session = createJvmPikPakPlaybackTransportSession(
+            uri = upstream.uri,
+            headers = mapOf("X-PikPak-Signature" to "signed"),
+            extraFiles = MediaExtraFiles.EMPTY,
+            cacheKey = "visible-${upstream.uri}",
+            contentLength = payload.size.toLong(),
+            contentType = "video/mp4",
+            onTraffic = { _, _ -> },
+            onCacheProgress = progress::add,
+            cacheStore = PikPakPlaybackCacheStore(cacheRoot, blockSize = 4),
+        )
+
+        try {
+            val proxyUri = session.mediaData.uri
+            val firstRead = (URI.create(proxyUri).toURL().openConnection() as HttpURLConnection).apply {
+                setRequestProperty("Range", "bytes=4-11")
+            }
+            assertEquals(206, firstRead.responseCode)
+            assertContentEquals(payload.copyOfRange(4, 12), firstRead.inputStream.readBytes())
+
+            val visibleProgress = progress.last()
+            assertEquals(
+                listOf(ChunkState.NONE, ChunkState.DONE, ChunkState.NONE),
+                visibleProgress.chunkStates,
+            )
+            assertEquals(0.25f, visibleProgress.chunkWeights[0], 0.0001f)
+            assertEquals(0.5f, visibleProgress.chunkWeights[1], 0.0001f)
+            assertEquals(0.25f, visibleProgress.chunkWeights[2], 0.0001f)
+
+            val requestCount = requests.size
+            val backwardRead = (URI.create(proxyUri).toURL().openConnection() as HttpURLConnection).apply {
+                setRequestProperty("Range", "bytes=4-7")
+            }
+            assertEquals(206, backwardRead.responseCode)
+            assertContentEquals(payload.copyOfRange(4, 8), backwardRead.inputStream.readBytes())
+            assertEquals(requestCount, requests.size, "A backward read inside the visible cache must stay local")
+        } finally {
+            session.close()
+            upstream.close()
+            cacheRoot.deleteRecursively()
+        }
+    }
+
     @Test
     fun `client reset does not escape proxy connection thread`() {
         val upstream = TestRangeServer(
@@ -232,6 +284,11 @@ class PikPakPlaybackTransportTest {
 
         val reopened = PikPakPlaybackCacheStore(cacheRoot, maxBytes = 16L, blockSize = 4)
             .open("persistent", fileSize = 8L, contentType = "video/mp4")!!
+        assertEquals(
+            listOf(ChunkState.DONE, ChunkState.NONE),
+            reopened.snapshotProgressInfo().chunkStates,
+            "Persisted ranges must be visible before the first playback read",
+        )
         val cached = reopened.getOrFetch(0) { _, _ -> error("Persistent block should not be downloaded again") }
 
         assertContentEquals(ByteArray(4) { 7 }, cached)

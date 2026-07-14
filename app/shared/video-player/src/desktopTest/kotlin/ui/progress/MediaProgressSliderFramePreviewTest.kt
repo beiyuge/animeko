@@ -10,6 +10,11 @@
 package me.him188.ani.app.videoplayer.ui.progress
 
 import androidx.collection.floatListOf
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -17,9 +22,11 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import me.him188.ani.app.domain.media.player.ChunkState
 import me.him188.ani.app.domain.media.player.MediaCacheProgressInfo
 import me.him188.ani.app.ui.framework.exists
@@ -34,6 +41,55 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalTestApi::class)
 class MediaProgressSliderFramePreviewTest {
+
+    @Test
+    fun `cached intervals render as translucent bands on the progress track`() = runAniComposeUiTest {
+        val cacheProgress = MediaCacheProgressInfo(
+            chunkWeights = floatListOf(0.2f, 0.2f, 0.2f, 0.2f, 0.2f),
+            chunkStates = listOf(
+                ChunkState.NONE,
+                ChunkState.DONE,
+                ChunkState.NONE,
+                ChunkState.DONE,
+                ChunkState.NONE,
+            ),
+        )
+        val state = PlayerProgressSliderState(
+            currentPositionMillis = { 80_000L },
+            totalDurationMillis = { 100_000L },
+            chapters = { emptyList() },
+            onPreview = {},
+            onPreviewFinished = {},
+        )
+        setContent {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    surface = Color.Black,
+                    onSurface = Color.White,
+                    primary = Color.Red,
+                ),
+            ) {
+                Box(Modifier.width(200.dp)) {
+                    MediaProgressSlider(
+                        state = state,
+                        cacheProgressInfoFlow = { cacheProgress },
+                    )
+                }
+            }
+        }
+
+        val bitmap = onNodeWithTag(TAG_PROGRESS_SLIDER).captureToImage()
+        val pixels = bitmap.toPixelMap()
+        val y = bitmap.height / 2
+        fun pixelAt(ratio: Float): Color = pixels[(bitmap.width * ratio).toInt(), y]
+
+        val uncached = pixelAt(0.1f)
+        val firstCached = pixelAt(0.3f)
+        val secondCached = pixelAt(0.7f)
+        assertTrue(firstCached.green > uncached.green + 0.25f, "cached=$firstCached uncached=$uncached")
+        assertTrue(firstCached.green < 0.9f, "The cache band must remain translucent: $firstCached")
+        assertEquals(firstCached.green, secondCached.green, 0.05f)
+    }
 
     private fun createSliderState() = PlayerProgressSliderState(
         currentPositionMillis = { 30_000L },

@@ -356,7 +356,9 @@ class EpisodeViewModel(
     )
 
     val cacheProgressInfoFlow = CacheProgressProvider(
-        player, backgroundScope,
+        player,
+        backgroundScope,
+        pikPakPlaybackCoordinator.state,
     ).cacheProgressInfoFlow
 
     /**
