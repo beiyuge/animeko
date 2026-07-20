@@ -24,6 +24,8 @@ import io.github.nihildigit.pikpak.listOfflineTasks
 import io.github.nihildigit.pikpak.rename
 import io.github.nihildigit.pikpak.upload
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -42,6 +44,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.bytestring.encodeToByteString
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
@@ -55,6 +58,10 @@ import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.io.createDirectories
 import me.him188.ani.utils.io.delete
 import me.him188.ani.utils.io.digest
+import me.him188.ani.utils.io.exists
+import me.him188.ani.utils.io.inSystem
+import me.him188.ani.utils.io.list
+import me.him188.ani.utils.io.readText
 import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.io.writeText
 import me.him188.ani.utils.ktor.ScopedHttpClient
@@ -103,7 +110,7 @@ class PikPakOfflineDownloadEngine(
     private val pollInterval: Duration = 2.seconds,
     private val resolveTimeout: Duration = 5.minutes,
     private val slotFolderName: String = "Animeko-Playing",
-    private val metadataStagingDir: SystemPath? = null,
+    private val metadataStorageDir: SystemPath? = null,
     /**
      * Supplies the user's desired slot-queue length at resolve time. Reading
      * the lambda per-resolve means the engine picks up setting changes without
@@ -153,8 +160,10 @@ class PikPakOfflineDownloadEngine(
     // budget covers queueing + work; a caller doesn't starve indefinitely
     // behind an earlier resolve.
     private val resolveMutex = Mutex()
+    private val metadataMutex = Mutex()
     private val resolvedMediaCache = PikPakResolvedMediaCache()
     private var resolvedMediaCacheCredentials: PikPakCredentials? = null
+    private val persistedMappings = mutableMapOf<String, PikPakFileMapping>()
     private val metadataJson = Json { prettyPrint = true }
 
     init {
@@ -168,7 +177,7 @@ class PikPakOfflineDownloadEngine(
             .distinctUntilChanged()
             .onEach { creds ->
                 scope.launch {
-                    runCatching { clientFor(creds!!).login() }
+                    runCatchingCancellable { clientFor(creds!!).login() }
                         .onFailure { logger.warn(it) { "[pikpak] pre-warm signin failed (non-fatal)" } }
                 }
             }
@@ -189,6 +198,7 @@ class PikPakOfflineDownloadEngine(
             }
             if (resolvedMediaCacheCredentials != creds) {
                 resolvedMediaCache.clear()
+                metadataMutex.withLock { persistedMappings.clear() }
                 resolvedMediaCacheCredentials = creds
             }
             val client = clientFor(creds)
@@ -236,7 +246,7 @@ class PikPakOfflineDownloadEngine(
             // matched and we handed back the wrong show).
             val topEntries = client.listFiles(parentId = slotId)
             val matchingBuckets = findSourceBuckets(topEntries, sourceKey)
-            renameSourceBuckets(client, matchingBuckets, sourceKey, naming)
+            scheduleSourceBucketRenames(client, matchingBuckets, sourceKey, naming)
 
             // Slot-hit fast path: we only reuse when the bucket belongs to
             // *this exact source*. pickVideoFile still runs inside the bucket
@@ -257,9 +267,11 @@ class PikPakOfflineDownloadEngine(
             val toEvict = pickEvictions(topEntries, sourceKey, queueLen)
             if (toEvict.isNotEmpty()) {
                 logger.info { "[pikpak] draining slot: keeping ${(queueLen - 1).coerceAtLeast(0)} newest, deleting ${toEvict.size}" }
-                runCatching { client.batchDelete(toEvict) }
+                runCatchingCancellable { client.batchDelete(toEvict) }
                     .onFailure { logger.warn(it) { "[pikpak] slot drain failed (non-fatal)" } }
-                topEntries.filter { it.id in toEvict }.forEach { resolvedMediaCache.remove(it.name) }
+                val evictedSourceKeys = evictedSourceKeys(topEntries, toEvict)
+                evictedSourceKeys.forEach(resolvedMediaCache::remove)
+                scheduleLocalMappingCleanup(evictedSourceKeys)
             } else if (queueLen >= SLOT_QUEUE_UNLIMITED_SENTINEL) {
                 logger.debug { "[pikpak] slot queue length = unlimited; skipping eviction" }
             }
@@ -391,7 +403,6 @@ class PikPakOfflineDownloadEngine(
             return@resolve null
         }
         if (detail.trashed || detail.id.isEmpty()) return@resolve null
-        detail = applyReadableFileName(client, sourceKey, detail, naming)
         try {
             _resolutionProgress.value = if (isCloudCacheHit) {
                 OfflineDownloadProgress.ResolvingCachedStreamUrl
@@ -399,6 +410,7 @@ class PikPakOfflineDownloadEngine(
                 OfflineDownloadProgress.ResolvingStreamUrl
             }
             buildResolvedMedia(detail).copy(isCloudCacheHit = isCloudCacheHit).also {
+                scheduleReadableFileMetadata(client, sourceKey, detail, naming)
                 _resolutionProgress.value = OfflineDownloadProgress.Ready
             }
         } catch (e: OfflineDownloadRejectedException) {
@@ -407,7 +419,7 @@ class PikPakOfflineDownloadEngine(
         }
     }
 
-    private suspend fun renameSourceBuckets(
+    private fun scheduleSourceBucketRenames(
         client: PikPakClient,
         buckets: List<FileStat>,
         sourceKey: String,
@@ -416,74 +428,136 @@ class PikPakOfflineDownloadEngine(
         buckets.forEachIndexed { index, bucket ->
             val target = readableBucketName(sourceKey, naming, duplicateIndex = index)
             if (bucket.name == target) return@forEachIndexed
-            runCatching { client.rename(bucket.id, target) }
-                .onFailure { logger.warn(it) { "[pikpak] could not rename bucket ${bucket.id} to $target" } }
+            scope.launch {
+                runCatchingCancellable { client.rename(bucket.id, target) }
+                    .onFailure { logger.warn(it) { "[pikpak] could not rename bucket ${bucket.id} to $target" } }
+            }
         }
     }
 
-    private suspend fun applyReadableFileName(
+    /**
+     * Mapping and display-name maintenance must never delay playback. The background job writes the
+     * mapping first and renames the video only after that succeeds, so an upload failure cannot lose
+     * the provider's original filename.
+     */
+    private fun scheduleReadableFileMetadata(
         client: PikPakClient,
         sourceKey: String,
         detail: FileDetail,
         naming: OfflineDownloadNaming?,
-    ): FileDetail {
-        if (naming == null) return detail
-        val originalName = detail.name
-        val targetName = readableVideoFileName(originalName, detail.id, naming)
-        var current = detail
-        if (targetName != originalName) {
-            current = runCatching {
-                client.rename(detail.id, targetName)
-                client.getFile(detail.id)
-            }.onFailure {
-                logger.warn(it) { "[pikpak] could not rename file ${detail.id} to $targetName" }
-            }.getOrDefault(detail)
+    ) {
+        val storageDir = metadataDirForCurrentAccount() ?: return
+        if (naming == null || detail.parentId.isEmpty() || detail.id.isEmpty()) return
+        scope.launch {
+            try {
+                metadataMutex.withLock {
+                    val mappingName = mappingFileName(detail.id)
+                    val localFile = storageDir.resolve(mappingName)
+                    val existing = client.listFiles(parentId = detail.parentId)
+                        .filter { it.isFile && it.name == mappingName }
+                    var previous = loadLocalMapping(localFile, detail.id)
+                    if (previous == null) {
+                        for (entry in existing) {
+                            previous = loadCloudMapping(client, entry, detail.id)
+                            if (previous != null) break
+                        }
+                    }
+
+                    // An existing cloud mapping may be the only remaining record of the original
+                    // provider filename after app data was cleared. Do not overwrite it with the
+                    // already-renamed visible name when there is no trusted local copy to merge.
+                    if (previous == null && existing.isNotEmpty()) return@withLock
+
+                    val mapping = updatedFileMapping(
+                        sourceKey = sourceKey,
+                        naming = naming,
+                        providerFileId = detail.id,
+                        observedFileName = detail.name,
+                        previous = previous,
+                    )
+                    storageDir.createDirectories()
+                    localFile.writeText(metadataJson.encodeToString(mapping))
+
+                    persistMappingBeforeRename(
+                        mapping = mapping,
+                        observedFileName = detail.name,
+                        persist = {
+                            if (persistedMappings[detail.id] != mapping) {
+                                if (existing.isNotEmpty()) {
+                                    client.batchDelete(existing.map(FileStat::id))
+                                }
+                                client.upload(detail.parentId, localFile.path)
+                                persistedMappings[detail.id] = mapping
+                            }
+                        },
+                        rename = { targetName ->
+                            client.rename(detail.id, targetName)
+                        },
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logger.warn(e) { "[pikpak] could not persist mapping or rename file ${detail.id}" }
+            }
         }
-        persistFileMapping(
-            client = client,
-            parentId = current.parentId,
-            mapping = PikPakFileMapping(
-                sourceKey = sourceKey,
-                subjectName = naming.subjectName,
-                episodeTitle = naming.episodeTitle,
-                episodeNumber = naming.episodeNumber,
-                providerFileId = current.id,
-                originalFileName = originalName,
-                fileName = current.name,
-            ),
-        )
-        return current
     }
 
-    private suspend fun persistFileMapping(
-        client: PikPakClient,
-        parentId: String,
-        mapping: PikPakFileMapping,
-    ) {
-        val stagingDir = metadataStagingDir ?: return
-        if (parentId.isEmpty()) return
-        val mappingName = mappingFileName(mapping.providerFileId)
-        runCatching {
-            val existing = client.listFiles(parentId = parentId)
-                .firstOrNull { it.isFile && it.name == mappingName }
-            if (existing != null) return@runCatching
-            stagingDir.createDirectories()
-            val localFile = stagingDir.resolve(mappingName)
-            try {
-                localFile.writeText(metadataJson.encodeToString(mapping))
-                client.upload(parentId, localFile.path)
-            } finally {
-                runCatching { localFile.delete() }
-            }
+    private fun loadLocalMapping(localFile: SystemPath, providerFileId: String): PikPakFileMapping? {
+        if (!localFile.exists()) return null
+        return runCatching {
+            metadataJson.decodeFromString<PikPakFileMapping>(localFile.readText())
+                .takeIf { it.providerFileId == providerFileId }
         }.onFailure {
-            logger.warn(it) { "[pikpak] could not persist mapping for file ${mapping.providerFileId}" }
+            logger.warn(it) { "[pikpak] could not read local mapping for file $providerFileId" }
+        }.getOrNull()
+    }
+
+    private suspend fun loadCloudMapping(
+        client: PikPakClient,
+        entry: FileStat,
+        providerFileId: String,
+    ): PikPakFileMapping? = try {
+        val detail = client.getFile(entry.id)
+        val url = detail.downloadUrl ?: detail.webContentLink.takeIf(String::isNotEmpty) ?: return null
+        metadataJson.decodeFromString<PikPakFileMapping>(sharedHttp.get(url).bodyAsText())
+            .takeIf { it.providerFileId == providerFileId }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        logger.warn(e) { "[pikpak] could not read cloud mapping ${entry.id} for file $providerFileId" }
+        null
+    }
+
+    private fun scheduleLocalMappingCleanup(sourceKeys: Collection<String>) {
+        val storageDir = metadataDirForCurrentAccount() ?: return
+        if (sourceKeys.isEmpty()) return
+        scope.launch {
+            metadataMutex.withLock {
+                if (!storageDir.exists()) return@withLock
+                for (path in storageDir.list()) {
+                    val localFile = path.inSystem
+                    val mapping = runCatching {
+                        metadataJson.decodeFromString<PikPakFileMapping>(localFile.readText())
+                    }.getOrNull() ?: continue
+                    if (mapping.sourceKey !in sourceKeys) continue
+                    runCatching { localFile.delete() }
+                        .onFailure { logger.warn(it) { "[pikpak] could not delete local mapping $localFile" } }
+                    persistedMappings.remove(mapping.providerFileId)
+                }
+            }
         }
+    }
+
+    private fun metadataDirForCurrentAccount(): SystemPath? {
+        val account = resolvedMediaCacheCredentials?.username ?: return null
+        return metadataStorageDir?.resolve("account-${sha256HexShort(account)}")
     }
 
     private fun scheduleCleanup(client: PikPakClient, fileId: String?) {
         if (fileId.isNullOrEmpty()) return
         scope.launch {
-            runCatching { client.batchDelete(listOf(fileId)) }
+            runCatchingCancellable { client.batchDelete(listOf(fileId)) }
                 .onFailure { logger.warn(it) { "[pikpak] cleanup batchDelete failed id=$fileId" } }
         }
     }
@@ -689,7 +763,7 @@ private fun sanitizePikPakName(value: String?, fallback: String, maxLength: Int)
     return sanitized.ifEmpty { fallback }
 }
 
-private fun mappingFileName(providerFileId: String): String =
+internal fun mappingFileName(providerFileId: String): String =
     "$MAPPING_FILE_PREFIX${safeFileId(providerFileId, maxLength = 12)}.json"
 
 private fun safeFileId(value: String, maxLength: Int): String =
@@ -699,7 +773,7 @@ private fun isAnimekoMetadataFile(name: String): Boolean =
     name.startsWith(MAPPING_FILE_PREFIX) && name.endsWith(".json", ignoreCase = true)
 
 @Serializable
-private data class PikPakFileMapping(
+internal data class PikPakFileMapping(
     val version: Int = 1,
     val sourceKey: String,
     val subjectName: String?,
@@ -709,6 +783,46 @@ private data class PikPakFileMapping(
     val originalFileName: String,
     val fileName: String,
 )
+
+internal fun updatedFileMapping(
+    sourceKey: String,
+    naming: OfflineDownloadNaming,
+    providerFileId: String,
+    observedFileName: String,
+    previous: PikPakFileMapping?,
+): PikPakFileMapping {
+    val originalFileName = previous?.originalFileName ?: observedFileName
+    return PikPakFileMapping(
+        sourceKey = sourceKey,
+        subjectName = naming.subjectName,
+        episodeTitle = naming.episodeTitle,
+        episodeNumber = naming.episodeNumber,
+        providerFileId = providerFileId,
+        originalFileName = originalFileName,
+        fileName = readableVideoFileName(originalFileName, providerFileId, naming),
+    )
+}
+
+internal suspend fun <T> runCatchingCancellable(block: suspend () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
+
+internal suspend fun persistMappingBeforeRename(
+    mapping: PikPakFileMapping,
+    observedFileName: String,
+    persist: suspend () -> Unit,
+    rename: suspend (targetName: String) -> Unit,
+) {
+    persist()
+    if (observedFileName != mapping.fileName) {
+        rename(mapping.fileName)
+    }
+}
 
 /** Selects the file produced by an InstantComplete probe without confusing it with an older bucket entry. */
 internal fun selectInstantCompleteEntry(entries: List<FileStat>, idsBeforeProbe: Set<String>): FileStat? =
@@ -837,3 +951,10 @@ internal fun pickEvictions(
         .drop(keepCount)
         .map { it.id }
 }
+
+internal fun evictedSourceKeys(topEntries: List<FileStat>, evictedIds: Collection<String>): List<String> =
+    topEntries.asSequence()
+        .filter { it.isFolder && it.id in evictedIds }
+        .mapNotNull { bucketSourceKey(it.name) }
+        .distinct()
+        .toList()

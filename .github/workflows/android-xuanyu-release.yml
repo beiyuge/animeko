@@ -135,7 +135,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Animeko ${{ github.ref_name }}
           body: |
-            Animeko xuanyu 定制版（Android 单独版本）。
+            Animeko xuanyu 定制版（Android 安装包）。
 
             - 版本：${{ github.ref_name }}
             - 包名：me.him188.ani.xuanyu

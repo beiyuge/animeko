@@ -184,7 +184,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
             credentials = credentialsFlow,
             scope = scope,
             sessionStore = sessionStore,
-            metadataStagingDir = getContext().files.cacheDir.resolve("pikpak-metadata"),
+            metadataStorageDir = getContext().files.dataDir.resolve("pikpak-metadata"),
             slotQueueLength = { configState.value.slotQueueLength },
         )
     }

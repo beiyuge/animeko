@@ -5,9 +5,12 @@
 
 package me.him188.ani.torrent.pikpak
 
+import kotlinx.coroutines.test.runTest
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -63,5 +66,84 @@ class PikPakCloudNamingTest {
                 naming = naming.copy(episodeTitle = "特典", episodeNumber = "SP"),
             ),
         )
+    }
+
+    @Test
+    fun `mapping update preserves the original provider filename`() {
+        val first = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming,
+            providerFileId = "file-123456789",
+            observedFileName = "[Group] Show S02E02.mkv",
+            previous = null,
+        )
+        val updated = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming.copy(episodeTitle = "修正后的中文标题"),
+            providerFileId = "file-123456789",
+            observedFileName = first.fileName,
+            previous = first,
+        )
+
+        assertEquals("[Group] Show S02E02.mkv", updated.originalFileName)
+        assertEquals("第02集 - 修正后的中文标题【file-123】.mkv", updated.fileName)
+    }
+
+    @Test
+    fun `cancellable best effort helper never swallows cancellation`() = runTest {
+        assertFailsWith<CancellationException> {
+            runCatchingCancellable<Unit> { throw CancellationException("cancel") }
+        }
+    }
+
+    @Test
+    fun `cancellable best effort helper returns ordinary failures`() = runTest {
+        val failure = IllegalStateException("upload failed")
+
+        assertEquals(failure, runCatchingCancellable<Unit> { throw failure }.exceptionOrNull())
+    }
+
+    @Test
+    fun `file is never renamed when mapping persistence fails`() = runTest {
+        val mapping = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming,
+            providerFileId = "file-123456789",
+            observedFileName = "original.mkv",
+            previous = null,
+        )
+        var renamed = false
+
+        assertFailsWith<IllegalStateException> {
+            persistMappingBeforeRename(
+                mapping = mapping,
+                observedFileName = "original.mkv",
+                persist = { error("upload failed") },
+                rename = { renamed = true },
+            )
+        }
+
+        assertFalse(renamed)
+    }
+
+    @Test
+    fun `file is renamed only after mapping persistence succeeds`() = runTest {
+        val mapping = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming,
+            providerFileId = "file-123456789",
+            observedFileName = "original.mkv",
+            previous = null,
+        )
+        val events = mutableListOf<String>()
+
+        persistMappingBeforeRename(
+            mapping = mapping,
+            observedFileName = "original.mkv",
+            persist = { events += "persist" },
+            rename = { events += "rename:$it" },
+        )
+
+        assertEquals(listOf("persist", "rename:${mapping.fileName}"), events)
     }
 }

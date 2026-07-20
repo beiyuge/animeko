@@ -348,7 +348,7 @@ fun getIosModules(
             credentials = credentialsFlow,
             scope = coroutineScope,
             sessionStore = sessionStore,
-            metadataStagingDir = context.files.cacheDir.resolve("pikpak-metadata"),
+            metadataStorageDir = context.files.dataDir.resolve("pikpak-metadata"),
             slotQueueLength = { configState.value.slotQueueLength },
         )
     }

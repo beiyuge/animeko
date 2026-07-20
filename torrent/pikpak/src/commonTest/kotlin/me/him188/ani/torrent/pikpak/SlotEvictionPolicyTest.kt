@@ -166,6 +166,20 @@ class SlotEvictionPolicyTest {
     }
 
     @Test
+    fun `eviction clears process cache by durable source key instead of readable folder name`() {
+        val readable = bucket(
+            "间谍过家家【Animeko-ABCDEF】",
+            createdTime = "2020-01-01T00:00:00Z",
+            id = "id-readable",
+        )
+
+        assertEquals(
+            listOf("ABCDEF"),
+            evictedSourceKeys(listOf(readable), listOf("id-readable")),
+        )
+    }
+
+    @Test
     fun `queueLength N keeps the N-1 newest non-current buckets`() {
         val entries = listOf(current, older1, older2, older3, newerNonCurrent)
         val evicted = pickEvictions(entries, currentSourceKey = "CURRENT", queueLength = 3)
