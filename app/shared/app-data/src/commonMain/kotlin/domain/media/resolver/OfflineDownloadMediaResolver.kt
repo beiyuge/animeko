@@ -21,6 +21,7 @@ import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
@@ -114,7 +115,16 @@ class OfflineDownloadMediaResolver(
                     }
                 }
                 try {
-                    engine.resolve(uri, pickVideoFile)
+                    engine.resolve(
+                        uri = uri,
+                        pickVideoFile = pickVideoFile,
+                        naming = OfflineDownloadNaming(
+                            subjectName = media.properties.subjectName
+                                ?: media.originalTitle.takeIf(String::isNotBlank),
+                            episodeTitle = episode.title.takeIf(String::isNotBlank),
+                            episodeNumber = (episode.ep ?: episode.sort).toString(),
+                        ),
+                    )
                 } finally {
                     progressJob.cancel()
                 }

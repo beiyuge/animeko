@@ -55,8 +55,16 @@ interface OfflineDownloadEngine {
     suspend fun resolve(
         uri: String,
         pickVideoFile: (candidateFilenames: List<String>) -> String? = { null },
+        naming: OfflineDownloadNaming? = null,
     ): ResolvedMedia
 }
+
+/** User-facing names that a provider may apply to its durable cloud files. */
+data class OfflineDownloadNaming(
+    val subjectName: String?,
+    val episodeTitle: String?,
+    val episodeNumber: String?,
+)
 
 sealed interface OfflineDownloadProgress {
     data object Idle : OfflineDownloadProgress

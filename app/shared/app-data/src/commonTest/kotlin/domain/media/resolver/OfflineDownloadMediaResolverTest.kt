@@ -23,6 +23,7 @@ import me.him188.ani.app.domain.media.createTestMediaProperties
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.MediaExtraFiles
@@ -32,6 +33,7 @@ import me.him188.ani.datasources.api.topic.EpisodeRange
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.torrent.offline.ResolvedMedia
 import org.openani.mediamp.source.MediaExtraFiles as MediampMediaExtraFiles
@@ -59,7 +61,7 @@ import kotlin.test.assertTrue
  */
 class OfflineDownloadMediaResolverTest {
 
-    private val magnetMedia: Media = createTestDefaultMedia(
+    private val magnetMedia: DefaultMedia = createTestDefaultMedia(
         mediaId = "test.magnet",
         mediaSourceId = "test",
         originalUrl = "https://example.org/1",
@@ -121,6 +123,32 @@ class OfflineDownloadMediaResolverTest {
         val opened = assertIs<PikPakStreamingMediaDataProvider>(provider)
             .open(kotlinx.coroutines.CoroutineScope(kotlin.coroutines.EmptyCoroutineContext))
         assertEquals("https://cdn.example/signed.mp4", opened.uri)
+    }
+
+    @Test
+    fun `resolve - passes readable cloud naming metadata to engine`() = runTest {
+        val media = magnetMedia.copy(
+            originalTitle = "间谍过家家 第二季 02",
+            properties = createTestMediaProperties(subjectName = "间谍过家家 第二季"),
+        )
+        val engine = FakeEngine(
+            isSupported = true,
+            resolveResult = ResolvedMedia(streamUrl = "https://cdn.example/signed.mp4"),
+        )
+
+        OfflineDownloadMediaResolver(engine).resolve(
+            media,
+            EpisodeMetadata(title = "母亲与妻子", ep = EpisodeSort(2), sort = EpisodeSort(14)),
+        )
+
+        assertEquals(
+            OfflineDownloadNaming(
+                subjectName = "间谍过家家 第二季",
+                episodeTitle = "母亲与妻子",
+                episodeNumber = "02",
+            ),
+            engine.lastNaming,
+        )
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -364,11 +392,15 @@ class OfflineDownloadMediaResolverTest {
         override val id: String = "fake"
         override val displayName: String = "Fake"
         override val isSupported: StateFlow<Boolean> = MutableStateFlow(isSupported)
+        var lastNaming: OfflineDownloadNaming? = null
+            private set
 
         override suspend fun resolve(
             uri: String,
             pickVideoFile: (candidateFilenames: List<String>) -> String?,
+            naming: OfflineDownloadNaming?,
         ): ResolvedMedia {
+            lastNaming = naming
             resolveThrows?.let { throw it }
             candidateFilenames?.let { candidates ->
                 val selected = pickVideoFile(candidates)

@@ -40,7 +40,11 @@ class SlotEvictionPolicyTest {
         val episodeOne = file("Show S01E01.mkv", id = "ep-1")
         val episodeTwo = file("Show S01E02.mkv", id = "ep-2")
         val tree = mapOf(
-            "bucket" to listOf(folder("season", id = "season"), episodeOne),
+            "bucket" to listOf(
+                folder("season", id = "season"),
+                episodeOne,
+                file("Animeko映射-ep-1.json", id = "mapping"),
+            ),
             "season" to listOf(folder("disc", id = "disc"), episodeOne),
             "disc" to listOf(episodeTwo, folder("cycle", id = "bucket")),
         )
@@ -63,6 +67,16 @@ class SlotEvictionPolicyTest {
         assertEquals(
             listOf("upper", "lower"),
             findSourceBuckets(listOf(upper, lower, unrelated, sameNameFile), "ABCDEF").map(FileStat::id),
+        )
+    }
+
+    @Test
+    fun `durable source lookup recognises readable bucket names`() {
+        val readable = bucket("间谍过家家【Animeko-ABCDEF】", "2026-01-01T00:00:00Z", id = "readable")
+
+        assertEquals(
+            listOf("readable"),
+            findSourceBuckets(listOf(readable), "ABCDEF").map(FileStat::id),
         )
     }
 
@@ -133,6 +147,22 @@ class SlotEvictionPolicyTest {
         val entries = listOf(ancientCurrent, older1, older2)
         val evicted = pickEvictions(entries, currentSourceKey = "CURRENT", queueLength = 1)
         assertTrue("id-current" !in evicted, "current bucket must survive eviction; got $evicted")
+    }
+
+    @Test
+    fun `readable current bucket is never evicted`() {
+        val readableCurrent = bucket(
+            "间谍过家家【Animeko-CURRENT】",
+            createdTime = "2020-01-01T00:00:00Z",
+            id = "id-readable-current",
+        )
+        val evicted = pickEvictions(
+            listOf(readableCurrent, older1),
+            currentSourceKey = "CURRENT",
+            queueLength = 1,
+        )
+
+        assertTrue("id-readable-current" !in evicted)
     }
 
     @Test

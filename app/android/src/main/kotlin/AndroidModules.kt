@@ -215,6 +215,7 @@ fun getAndroidModules(
             credentials = credentialsFlow,
             scope = coroutineScope,
             sessionStore = sessionStore,
+            metadataStagingDir = androidContext().files.cacheDir.resolve("pikpak-metadata"),
             slotQueueLength = { configState.value.slotQueueLength },
         )
     }

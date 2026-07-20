@@ -60,6 +60,7 @@ import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
 import me.him188.ani.utils.httpdownloader.HttpDownloader
 import me.him188.ani.utils.io.absolutePath
 import me.him188.ani.utils.io.inSystem
+import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.io.toKtPath
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
@@ -183,6 +184,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
             credentials = credentialsFlow,
             scope = scope,
             sessionStore = sessionStore,
+            metadataStagingDir = getContext().files.cacheDir.resolve("pikpak-metadata"),
             slotQueueLength = { configState.value.slotQueueLength },
         )
     }

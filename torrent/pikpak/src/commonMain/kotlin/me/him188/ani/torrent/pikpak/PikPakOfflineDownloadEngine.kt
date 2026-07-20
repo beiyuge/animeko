@@ -21,6 +21,8 @@ import io.github.nihildigit.pikpak.getFile
 import io.github.nihildigit.pikpak.getOrCreateDeepFolderId
 import io.github.nihildigit.pikpak.listFiles
 import io.github.nihildigit.pikpak.listOfflineTasks
+import io.github.nihildigit.pikpak.rename
+import io.github.nihildigit.pikpak.upload
 import io.ktor.client.HttpClient
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
@@ -39,13 +41,22 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.bytestring.encodeToByteString
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import me.him188.ani.torrent.offline.ResolvedMedia
 import me.him188.ani.utils.io.DigestAlgorithm
+import me.him188.ani.utils.io.SystemPath
+import me.him188.ani.utils.io.createDirectories
+import me.him188.ani.utils.io.delete
 import me.him188.ani.utils.io.digest
+import me.him188.ani.utils.io.resolve
+import me.him188.ani.utils.io.writeText
 import me.him188.ani.utils.ktor.ScopedHttpClient
 import me.him188.ani.utils.ktor.UnsafeScopedHttpClientApi
 import me.him188.ani.utils.logging.debug
@@ -92,6 +103,7 @@ class PikPakOfflineDownloadEngine(
     private val pollInterval: Duration = 2.seconds,
     private val resolveTimeout: Duration = 5.minutes,
     private val slotFolderName: String = "Animeko-Playing",
+    private val metadataStagingDir: SystemPath? = null,
     /**
      * Supplies the user's desired slot-queue length at resolve time. Reading
      * the lambda per-resolve means the engine picks up setting changes without
@@ -143,6 +155,7 @@ class PikPakOfflineDownloadEngine(
     private val resolveMutex = Mutex()
     private val resolvedMediaCache = PikPakResolvedMediaCache()
     private var resolvedMediaCacheCredentials: PikPakCredentials? = null
+    private val metadataJson = Json { prettyPrint = true }
 
     init {
         // Pre-warm the bearer token whenever valid credentials are available.
@@ -165,6 +178,7 @@ class PikPakOfflineDownloadEngine(
     override suspend fun resolve(
         uri: String,
         pickVideoFile: (candidateFilenames: List<String>) -> String?,
+        naming: OfflineDownloadNaming?,
     ): ResolvedMedia =
         withTimeout(resolveTimeout) {
             resolveMutex.withLock {
@@ -187,7 +201,7 @@ class PikPakOfflineDownloadEngine(
 
             val sourceKey = sourceKeyFor(uri)
             _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
-            resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { cached ->
+            resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = true)?.let { cached ->
                 logger.info { "[pikpak] memory cache hit: bucket=$sourceKey file=${cached.providerFileId}" }
                 return@withTimeout cached
             }
@@ -212,8 +226,9 @@ class PikPakOfflineDownloadEngine(
             val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
 
             // Per-source sub-folder: every magnet / .torrent URL gets its own
-            // namespace inside the slot, keyed by infohash (magnet) or a hash
-            // of the URL (.torrent). This is what lets us do a "cache hit"
+            // namespace inside the slot. Its visible name is readable, while
+            // its suffix retains the infohash (magnet) or URL hash (.torrent).
+            // This is what lets us do a "cache hit"
             // safely — previously pickVideoFile alone was the hit predicate,
             // which mis-fired when an old cached episode and a new resolve's
             // target shared an episode number (e.g. slot held "Android ... 02"
@@ -221,6 +236,7 @@ class PikPakOfflineDownloadEngine(
             // matched and we handed back the wrong show).
             val topEntries = client.listFiles(parentId = slotId)
             val matchingBuckets = findSourceBuckets(topEntries, sourceKey)
+            renameSourceBuckets(client, matchingBuckets, sourceKey, naming)
 
             // Slot-hit fast path: we only reuse when the bucket belongs to
             // *this exact source*. pickVideoFile still runs inside the bucket
@@ -230,7 +246,7 @@ class PikPakOfflineDownloadEngine(
                     .flatMap { collectSlotCandidates(client, it.id) }
                     .distinctBy(CachedPikPakFile::id)
                 resolvedMediaCache.replace(sourceKey, cached)
-                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = true)?.let { hit ->
+                resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = true)?.let { hit ->
                     logger.info { "[pikpak] slot hit: bucket=$sourceKey file=${hit.providerFileId}" }
                     return@withTimeout hit
                 }
@@ -253,7 +269,10 @@ class PikPakOfflineDownloadEngine(
             // a season pack's pack-folder + children all sit inside the bucket.
             val bucketId = matchingBuckets.firstOrNull()?.id ?: run {
                 _resolutionProgress.value = OfflineDownloadProgress.PreparingStorage
-                client.getOrCreateDeepFolderId(parentId = "", path = "$slotFolderName/$sourceKey")
+                client.getOrCreateDeepFolderId(
+                    parentId = "",
+                    path = "$slotFolderName/${readableBucketName(sourceKey, naming)}",
+                )
             }
 
             // Track the latest root id we've seen — used for failure cleanup
@@ -322,7 +341,7 @@ class PikPakOfflineDownloadEngine(
                 }
                 resolvedMediaCache.replace(sourceKey, candidates)
 
-                resolveCachedSource(client, sourceKey, pickVideoFile, isCloudCacheHit = cloudCacheHit)
+                resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = cloudCacheHit)
                     ?: throw OfflineDownloadRejectedException(
                         "PikPak resource $sourceKey contains no cached playable file " +
                                 "(files: ${candidates.joinToString(limit = 10) { it.name }})",
@@ -359,10 +378,11 @@ class PikPakOfflineDownloadEngine(
         client: PikPakClient,
         sourceKey: String,
         pickVideoFile: (candidateFilenames: List<String>) -> String?,
+        naming: OfflineDownloadNaming?,
         isCloudCacheHit: Boolean,
     ): ResolvedMedia? = resolvedMediaCache.resolve(sourceKey, pickVideoFile) { cachedFile ->
         _resolutionProgress.value = progressWhileSelectingFile(isCloudCacheHit)
-        val detail = try {
+        var detail = try {
             client.getFile(cachedFile.id)
         } catch (e: CancellationException) {
             throw e
@@ -371,6 +391,7 @@ class PikPakOfflineDownloadEngine(
             return@resolve null
         }
         if (detail.trashed || detail.id.isEmpty()) return@resolve null
+        detail = applyReadableFileName(client, sourceKey, detail, naming)
         try {
             _resolutionProgress.value = if (isCloudCacheHit) {
                 OfflineDownloadProgress.ResolvingCachedStreamUrl
@@ -383,6 +404,79 @@ class PikPakOfflineDownloadEngine(
         } catch (e: OfflineDownloadRejectedException) {
             logger.debug { "[pikpak] cached file ${cachedFile.id} is not playable: ${e.message}" }
             null
+        }
+    }
+
+    private suspend fun renameSourceBuckets(
+        client: PikPakClient,
+        buckets: List<FileStat>,
+        sourceKey: String,
+        naming: OfflineDownloadNaming?,
+    ) {
+        buckets.forEachIndexed { index, bucket ->
+            val target = readableBucketName(sourceKey, naming, duplicateIndex = index)
+            if (bucket.name == target) return@forEachIndexed
+            runCatching { client.rename(bucket.id, target) }
+                .onFailure { logger.warn(it) { "[pikpak] could not rename bucket ${bucket.id} to $target" } }
+        }
+    }
+
+    private suspend fun applyReadableFileName(
+        client: PikPakClient,
+        sourceKey: String,
+        detail: FileDetail,
+        naming: OfflineDownloadNaming?,
+    ): FileDetail {
+        if (naming == null) return detail
+        val originalName = detail.name
+        val targetName = readableVideoFileName(originalName, detail.id, naming)
+        var current = detail
+        if (targetName != originalName) {
+            current = runCatching {
+                client.rename(detail.id, targetName)
+                client.getFile(detail.id)
+            }.onFailure {
+                logger.warn(it) { "[pikpak] could not rename file ${detail.id} to $targetName" }
+            }.getOrDefault(detail)
+        }
+        persistFileMapping(
+            client = client,
+            parentId = current.parentId,
+            mapping = PikPakFileMapping(
+                sourceKey = sourceKey,
+                subjectName = naming.subjectName,
+                episodeTitle = naming.episodeTitle,
+                episodeNumber = naming.episodeNumber,
+                providerFileId = current.id,
+                originalFileName = originalName,
+                fileName = current.name,
+            ),
+        )
+        return current
+    }
+
+    private suspend fun persistFileMapping(
+        client: PikPakClient,
+        parentId: String,
+        mapping: PikPakFileMapping,
+    ) {
+        val stagingDir = metadataStagingDir ?: return
+        if (parentId.isEmpty()) return
+        val mappingName = mappingFileName(mapping.providerFileId)
+        runCatching {
+            val existing = client.listFiles(parentId = parentId)
+                .firstOrNull { it.isFile && it.name == mappingName }
+            if (existing != null) return@runCatching
+            stagingDir.createDirectories()
+            val localFile = stagingDir.resolve(mappingName)
+            try {
+                localFile.writeText(metadataJson.encodeToString(mapping))
+                client.upload(parentId, localFile.path)
+            } finally {
+                runCatching { localFile.delete() }
+            }
+        }.onFailure {
+            logger.warn(it) { "[pikpak] could not persist mapping for file ${mapping.providerFileId}" }
         }
     }
 
@@ -522,12 +616,106 @@ internal fun sourceKeyFor(uri: String): String {
 
 /** Returns every durable bucket for this exact source, including legacy case variants. */
 internal fun findSourceBuckets(topEntries: List<FileStat>, sourceKey: String): List<FileStat> =
-    topEntries.filter { it.isFolder && it.name.equals(sourceKey, ignoreCase = true) }
+    topEntries.filter {
+        it.isFolder && (
+                it.name.equals(sourceKey, ignoreCase = true) ||
+                        bucketSourceKey(it.name)?.equals(sourceKey, ignoreCase = true) == true
+                )
+    }
+
+private const val BUCKET_KEY_PREFIX = "【Animeko-"
+private const val BUCKET_KEY_SUFFIX = "】"
+private const val MAPPING_FILE_PREFIX = "Animeko映射-"
+
+internal fun readableBucketName(
+    sourceKey: String,
+    naming: OfflineDownloadNaming?,
+    duplicateIndex: Int = 0,
+): String {
+    val subject = sanitizePikPakName(naming?.subjectName, fallback = "动画资源", maxLength = 80)
+    val duplicate = if (duplicateIndex == 0) "" else "-${duplicateIndex + 1}"
+    return "$subject$duplicate$BUCKET_KEY_PREFIX$sourceKey$BUCKET_KEY_SUFFIX"
+}
+
+internal fun bucketSourceKey(name: String): String? {
+    val markerStart = name.lastIndexOf(BUCKET_KEY_PREFIX)
+    if (markerStart >= 0 && name.endsWith(BUCKET_KEY_SUFFIX)) {
+        return name.substring(
+            startIndex = markerStart + BUCKET_KEY_PREFIX.length,
+            endIndex = name.length - BUCKET_KEY_SUFFIX.length,
+        ).takeIf(String::isNotEmpty)
+    }
+    return name.takeIf { legacy ->
+        ((legacy.length == 40 || legacy.length == 64) &&
+                legacy.all { it.uppercaseChar() in HEX_ALPHABET }) ||
+                legacy.matches(Regex("h-[0-9a-fA-F]{16}"))
+    }
+}
+
+internal fun readableVideoFileName(
+    originalName: String,
+    providerFileId: String,
+    naming: OfflineDownloadNaming,
+): String {
+    val episodeNumber = sanitizePikPakName(naming.episodeNumber, fallback = "", maxLength = 20)
+    val episodeLabel = when {
+        episodeNumber.isEmpty() -> "动画视频"
+        episodeNumber.matches(Regex("[0-9]+(?:\\.[0-9]+)?")) -> "第${episodeNumber}集"
+        else -> "特别篇-$episodeNumber"
+    }
+    val title = sanitizePikPakName(naming.episodeTitle, fallback = "", maxLength = 80)
+        .takeIf { it.isNotEmpty() && !it.equals(episodeNumber, ignoreCase = true) }
+    val idSuffix = safeFileId(providerFileId, maxLength = 8)
+        .takeIf(String::isNotEmpty)
+        ?.let { "【$it】" }
+        .orEmpty()
+    val extension = originalName.substringAfterLast('.', "")
+        .takeIf { it.length in 1..10 && it.all(Char::isLetterOrDigit) }
+        ?.let { ".$it" }
+        .orEmpty()
+    return buildList {
+        add(episodeLabel)
+        if (title != null) add(title)
+    }.joinToString(" - ") + idSuffix + extension
+}
+
+private fun sanitizePikPakName(value: String?, fallback: String, maxLength: Int): String {
+    val sanitized = value.orEmpty()
+        .replace(Regex("[\\u0000-\\u001F/\\\\:*?\"<>|]"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim(' ', '.')
+        .take(maxLength)
+        .trim(' ', '.')
+    return sanitized.ifEmpty { fallback }
+}
+
+private fun mappingFileName(providerFileId: String): String =
+    "$MAPPING_FILE_PREFIX${safeFileId(providerFileId, maxLength = 12)}.json"
+
+private fun safeFileId(value: String, maxLength: Int): String =
+    value.filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(maxLength)
+
+private fun isAnimekoMetadataFile(name: String): Boolean =
+    name.startsWith(MAPPING_FILE_PREFIX) && name.endsWith(".json", ignoreCase = true)
+
+@Serializable
+private data class PikPakFileMapping(
+    val version: Int = 1,
+    val sourceKey: String,
+    val subjectName: String?,
+    val episodeTitle: String?,
+    val episodeNumber: String?,
+    val providerFileId: String,
+    val originalFileName: String,
+    val fileName: String,
+)
 
 /** Selects the file produced by an InstantComplete probe without confusing it with an older bucket entry. */
 internal fun selectInstantCompleteEntry(entries: List<FileStat>, idsBeforeProbe: Set<String>): FileStat? =
-    entries.filterNot { it.id in idsBeforeProbe }.maxByOrNull { it.createdTime }
-        ?: entries.maxByOrNull { it.createdTime }
+    entries.filterNot { isAnimekoMetadataFile(it.name) }.let { contentEntries ->
+        contentEntries.filterNot { it.id in idsBeforeProbe }.maxByOrNull { it.createdTime }
+            ?: contentEntries.maxByOrNull { it.createdTime }
+    }
 
 /**
  * Cache-hit paths still validate the selected file id before refreshing its signed URL. Keep that
@@ -558,7 +746,7 @@ internal suspend fun collectPikPakFileCandidates(
         for (entry in listChildren(parentId)) {
             when {
                 entry.isFolder && entry.id.isNotEmpty() -> pendingFolders.addLast(entry.id)
-                entry.isFile && entry.id.isNotEmpty() -> {
+                entry.isFile && entry.id.isNotEmpty() && !isAnimekoMetadataFile(entry.name) -> {
                     filesById.putIfAbsent(entry.id, CachedPikPakFile(entry.id, entry.name))
                 }
             }
@@ -639,7 +827,10 @@ internal fun pickEvictions(
     queueLength: Int,
 ): List<String> {
     if (queueLength >= PikPakOfflineDownloadEngine.SLOT_QUEUE_UNLIMITED_SENTINEL) return emptyList()
-    val others = topEntries.filter { it.name != currentSourceKey }
+    val others = topEntries.filter {
+        !it.name.equals(currentSourceKey, ignoreCase = true) &&
+                bucketSourceKey(it.name)?.equals(currentSourceKey, ignoreCase = true) != true
+    }
     val keepCount = (queueLength - 1).coerceAtLeast(0)
     return others
         .sortedByDescending { it.createdTime }
