@@ -256,6 +256,8 @@
     <string name="settings_player_fullscreen_only_in_controller">不顯示</string>
     <string name="settings_player_fullscreen_button">豎屏模式下顯示全螢幕按鈕</string>
     <string name="settings_player_fullscreen_button_description">總是顯示播放器右下角的切換全螢幕按鈕，方便切換</string>
+    <string name="settings_player_frame_preview">顯示進度條畫面預覽</string>
+    <string name="settings_player_frame_preview_description">懸停或拖動進度條時，顯示目標位置的影片畫面</string>
     <string name="settings_player_enable_regex_filter">啟用正則彈幕過濾器</string>
     <string name="settings_player_pause_on_edit_danmaku">發送彈幕時自動暫停播放</string>
     <string name="settings_player_auto_mark_done">觀看 90% 後自動標記為看過</string>
@@ -442,9 +444,12 @@
     <string name="settings_update_popup_auto_update">自動更新</string>
     <string name="settings_update_popup_close">關閉</string>
     <string name="settings_update_popup_downloading">正在下載更新</string>
+    <string name="settings_update_popup_installing">正在安裝更新</string>
     <string name="settings_update_popup_cancel_download">要取消下載嗎?</string>
+    <string name="settings_update_popup_cancel_install">要取消更新嗎?</string>
     <string name="settings_update_popup_cancel">取消</string>
     <string name="settings_update_popup_continue_download">繼續下載</string>
+    <string name="settings_update_popup_continue_update">繼續更新</string>
     <string name="settings_update_popup_restart_update">重啟更新</string>
     <string name="settings_update_popup_download_complete">下載完成</string>
 

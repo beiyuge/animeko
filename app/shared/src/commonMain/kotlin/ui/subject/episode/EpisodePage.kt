@@ -911,6 +911,11 @@ private fun EpisodeVideo(
             vm.player.seekTo(it)
         },
     )
+    val framePreview = if (vm.videoScaffoldConfig.enableFramePreview) {
+        rememberMediaProgressFramePreviewState(vm.player)
+    } else {
+        null
+    }
     val scope = rememberCoroutineScope()
 
     // 必须在 UI 里, 跟随 context 变化. 否则 #958
@@ -989,7 +994,8 @@ private fun EpisodeVideo(
                 progressSliderState,
                 cacheProgressInfoFlow = vm.cacheProgressInfoFlow,
                 enabled = false,
-                framePreview = rememberMediaProgressFramePreviewState(vm.player),
+                framePreview = framePreview,
+                showFramePreviewInPopup = expanded,
             )
         },
         sidebarVisible = vm.sidebarVisible,
@@ -998,6 +1004,7 @@ private fun EpisodeVideo(
         },
         progressSliderState = progressSliderState,
         cacheProgressInfoFlow = vm.cacheProgressInfoFlow,
+        framePreview = framePreview,
         audioController = remember {
             derivedStateOf {
                 platformComponents.audioManager?.asLevelController(StreamType.MUSIC)
