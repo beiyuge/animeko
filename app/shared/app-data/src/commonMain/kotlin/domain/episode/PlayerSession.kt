@@ -9,6 +9,7 @@
 
 package me.him188.ani.app.domain.episode
 
+import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,13 +82,12 @@ class PlayerSession(
     private var hlsPlaybackProxySession: HlsPlaybackProxySession? = null
     private var managedMediaDataProvider: ManagedMediaDataProvider? = null
     private var pikPakPlaybackWindowJob: Job? = null
-    @Volatile
-    private var currentBackend: PlaybackBackend? = null
+    private val currentBackend = atomic<PlaybackBackend?>(null)
 
     init {
         lifecycleScope.launch {
             localTorrentAccessPolicy.isBlocked.collect { blocked ->
-                if (blocked && currentBackend == PlaybackBackend.LocalTorrent) {
+                if (blocked && currentBackend.value == PlaybackBackend.LocalTorrent) {
                     stopPlayback()
                 }
             }
@@ -152,7 +152,7 @@ class PlayerSession(
                 is PikPakBackedMediaDataProvider -> PlaybackBackend.PikPak
                 else -> PlaybackBackend.Http
             }
-            currentBackend = backend
+            currentBackend.value = backend
             _videoLoadingStateFlow.value = VideoLoadingState.Succeed(
                 isBt = source is TorrentBackedMediaDataProvider,
                 backend = backend,
@@ -205,7 +205,7 @@ class PlayerSession(
     }
 
     suspend fun stopPlayback() {
-        currentBackend = null
+        currentBackend.value = null
         pikPakPlaybackWindowJob?.cancel()
         pikPakPlaybackWindowJob = null
         stopPlayer()
@@ -214,7 +214,7 @@ class PlayerSession(
     }
 
     fun close() {
-        currentBackend = null
+        currentBackend.value = null
         pikPakPlaybackWindowJob?.cancel()
         pikPakPlaybackWindowJob = null
         lifecycleScope.cancel()
