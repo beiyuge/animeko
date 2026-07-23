@@ -10,10 +10,15 @@
 package me.him188.ani.app.domain.media.fetch
 
 import kotlinx.atomicfu.atomic
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import me.him188.ani.app.domain.media.TestMediaList
 import me.him188.ani.app.domain.mediasource.web.CaptchaRequiredException
@@ -22,10 +27,12 @@ import me.him188.ani.app.domain.mediasource.web.WebCaptchaRequest
 import me.him188.ani.app.domain.mediasource.instance.MediaSourceInstance
 import me.him188.ani.app.domain.mediasource.instance.createTestMediaSourceInstance
 import me.him188.ani.datasources.api.EpisodeSort
+import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.paging.SinglePagePagedSource
 import me.him188.ani.datasources.api.source.MatchKind
 import me.him188.ani.datasources.api.source.MediaFetchRequest
 import me.him188.ani.datasources.api.source.MediaMatch
+import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.datasources.api.source.TestHttpMediaSource
 import me.him188.ani.test.assertCoroutineSuspends
 import kotlin.coroutines.ContinuationInterceptor
@@ -35,16 +42,18 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * @see MediaFetcher
  */
 class MediaFetcherTest {
     private suspend fun createFetcher(
-        vararg instances: MediaSourceInstance
+        vararg instances: MediaSourceInstance,
+        config: MediaFetcherConfig = MediaFetcherConfig.Default,
     ): MediaSourceMediaFetcher {
         return MediaSourceMediaFetcher(
-            { MediaFetcherConfig.Default },
+            { config },
             listOf(*instances),
             currentCoroutineContext()[ContinuationInterceptor] ?: EmptyCoroutineContext,
         )
@@ -156,6 +165,83 @@ class MediaFetcherTest {
     ///////////////////////////////////////////////////////////////////////////
     // cumulativeResults
     ///////////////////////////////////////////////////////////////////////////
+
+    @Test
+    fun `local cache result keeps online sources idle while collected`() = runTest {
+        val onlineFetchCalled = AtomicInteger()
+        val cachedMedia = TestMediaList.first().copy(kind = MediaSourceKind.LocalCache)
+        val session = createFetcher(
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    kind = MediaSourceKind.LocalCache,
+                    fetch = {
+                        SinglePagePagedSource {
+                            listOf(MediaMatch(cachedMedia, MatchKind.EXACT)).asFlow()
+                        }
+                    },
+                ),
+            ),
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    fetch = {
+                        onlineFetchCalled.incrementAndGet()
+                        SinglePagePagedSource {
+                            TestMediaList.map { MediaMatch(it, MatchKind.EXACT) }.asFlow()
+                        }
+                    },
+                ),
+            ),
+        ).newSession(request1)
+
+        var latestResult = emptyList<Media>()
+        backgroundScope.launch {
+            session.cumulativeResults.collect { latestResult = it }
+        }
+        session.mediaSourceResults.first().awaitCompletion()
+        advanceTimeBy(10.seconds)
+        runCurrent()
+
+        assertEquals(listOf(cachedMedia), latestResult)
+        assertEquals(0, onlineFetchCalled.get())
+    }
+
+    @Test
+    fun `online sources start when local cache probe times out`() = runTest {
+        val onlineFetchCalled = AtomicInteger()
+        val session = createFetcher(
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    kind = MediaSourceKind.LocalCache,
+                    fetch = { awaitCancellation() },
+                ),
+            ),
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    fetch = {
+                        onlineFetchCalled.incrementAndGet()
+                        SinglePagePagedSource {
+                            TestMediaList.map { MediaMatch(it, MatchKind.EXACT) }.asFlow()
+                        }
+                    },
+                ),
+            ),
+            config = MediaFetcherConfig(
+                enableBTFetcher = true,
+                localCacheProbeTimeout = 1.seconds,
+            ),
+        ).newSession(request1)
+
+        backgroundScope.launch {
+            session.cumulativeResults.collect()
+        }
+        runCurrent()
+        assertEquals(0, onlineFetchCalled.get())
+
+        advanceTimeBy(1.seconds)
+        runCurrent()
+
+        assertEquals(1, onlineFetchCalled.get())
+    }
 
     @Test
     fun `awaitCompletedResults from one source`() = runTest {

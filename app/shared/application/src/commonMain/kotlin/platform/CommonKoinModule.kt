@@ -110,6 +110,7 @@ import me.him188.ani.app.domain.media.cache.engine.MediaCacheEngineKey
 import me.him188.ani.app.domain.media.cache.engine.TorrentMediaCacheEngine
 import me.him188.ani.app.domain.media.cache.storage.HttpMediaCacheStorage
 import me.him188.ani.app.domain.media.cache.storage.MediaSaveDirProvider
+import me.him188.ani.app.domain.media.cache.storage.PikPakCloudCacheMediaSource
 import me.him188.ani.app.domain.media.cache.storage.TorrentMediaCacheStorage
 import me.him188.ani.app.domain.media.fetch.MediaSourceManager
 import me.him188.ani.app.domain.media.fetch.MediaSourceManagerImpl
@@ -128,6 +129,7 @@ import me.him188.ani.app.domain.update.UpdateManager
 import me.him188.ani.app.domain.usecase.useCaseModules
 import me.him188.ani.app.ui.subject.details.state.DefaultSubjectDetailsStateFactory
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
+import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.datasources.bangumi.BangumiClient
 import me.him188.ani.datasources.bangumi.BangumiClientImpl
 import me.him188.ani.datasources.bangumi.turnstileBaseUrl
@@ -497,7 +499,8 @@ private fun KoinApplication.otherModules(getContext: () -> Context, coroutineSco
     single<MediaSourceManager> {
         MediaSourceManagerImpl(
             additionalSources = {
-                get<MediaCacheManager>().storagesIncludingDisabled.map { it.cacheMediaSource }
+                listOf(PikPakCloudCacheMediaSource(get<OfflineDownloadEngine>())) +
+                        get<MediaCacheManager>().storagesIncludingDisabled.map { it.cacheMediaSource }
             },
         )
     }

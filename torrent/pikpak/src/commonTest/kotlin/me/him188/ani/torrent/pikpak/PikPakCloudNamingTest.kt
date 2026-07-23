@@ -5,7 +5,10 @@
 
 package me.him188.ani.torrent.pikpak
 
+import io.github.nihildigit.pikpak.FileKind
+import io.github.nihildigit.pikpak.FileStat
 import kotlinx.coroutines.test.runTest
+import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
@@ -90,6 +93,70 @@ class PikPakCloudNamingTest {
     }
 
     @Test
+    fun `mapping stores opaque source payload for episode cache lookup`() {
+        val mapping = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming.copy(
+                cachedSource = OfflineDownloadCachedSource(
+                    subjectId = "123",
+                    episodeId = "456",
+                    sourcePayload = """{"mediaId":"source.1"}""",
+                ),
+            ),
+            providerFileId = "file-123456789",
+            observedFileName = "original.mkv",
+            previous = null,
+        )
+
+        assertEquals("123", mapping.cachedSource?.subjectId)
+        assertEquals("456", mapping.cachedSource?.episodeId)
+        assertEquals("""{"mediaId":"source.1"}""", mapping.cachedSource?.sourcePayload)
+    }
+
+    @Test
+    fun `cached source lookup recovers a nested cloud mapping`() = runTest {
+        val target = updatedFileMapping(
+            sourceKey = "ABCDEF",
+            naming = naming.copy(
+                cachedSource = OfflineDownloadCachedSource(
+                    subjectId = "123",
+                    episodeId = "456",
+                    sourcePayload = """{"mediaId":"source.1"}""",
+                ),
+            ),
+            providerFileId = "video-1",
+            observedFileName = "original.mkv",
+            previous = null,
+        )
+        val unrelated = target.copy(
+            cachedSource = target.cachedSource?.copy(episodeId = "other"),
+            providerFileId = "video-2",
+        )
+        val tree = mapOf(
+            "slot" to listOf(folder("bucket", "bucket")),
+            "bucket" to listOf(
+                folder("season", "season"),
+                mappingFile("unrelated"),
+            ),
+            "season" to listOf(mappingFile("target")),
+        )
+        val mappings = mapOf(
+            "unrelated" to unrelated,
+            "target" to target,
+        )
+
+        val recovered = findCloudCachedSourceMapping(
+            slotId = "slot",
+            subjectId = "123",
+            episodeId = "456",
+            listChildren = { tree[it].orEmpty() },
+            loadMapping = { mappings[it.id] },
+        )
+
+        assertEquals(target, recovered)
+    }
+
+    @Test
     fun `cancellable best effort helper never swallows cancellation`() = runTest {
         assertFailsWith<CancellationException> {
             runCatchingCancellable<Unit> { throw CancellationException("cancel") }
@@ -146,4 +213,16 @@ class PikPakCloudNamingTest {
 
         assertEquals(listOf("persist", "rename:${mapping.fileName}"), events)
     }
+
+    private fun folder(name: String, id: String) = FileStat(
+        id = id,
+        name = name,
+        kind = FileKind.FOLDER,
+    )
+
+    private fun mappingFile(id: String) = FileStat(
+        id = id,
+        name = "Animeko映射-$id.json",
+        kind = FileKind.FILE,
+    )
 }

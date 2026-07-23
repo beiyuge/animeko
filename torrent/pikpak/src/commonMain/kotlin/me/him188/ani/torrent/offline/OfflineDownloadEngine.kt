@@ -11,6 +11,7 @@ package me.him188.ani.torrent.offline
 
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.Serializable
 import kotlin.time.Instant
 
 /**
@@ -57,6 +58,14 @@ interface OfflineDownloadEngine {
         pickVideoFile: (candidateFilenames: List<String>) -> String? = { null },
         naming: OfflineDownloadNaming? = null,
     ): ResolvedMedia
+
+    /**
+     * Returns the source metadata persisted alongside a provider-side cached file for this episode.
+     *
+     * The payload is opaque to the engine. The app owns its format and can use it to recreate the
+     * original media candidate without querying online media sources again.
+     */
+    suspend fun findCachedSource(subjectId: String, episodeId: String): OfflineDownloadCachedSource? = null
 }
 
 /** User-facing names that a provider may apply to its durable cloud files. */
@@ -64,6 +73,14 @@ data class OfflineDownloadNaming(
     val subjectName: String?,
     val episodeTitle: String?,
     val episodeNumber: String?,
+    val cachedSource: OfflineDownloadCachedSource? = null,
+)
+
+@Serializable
+data class OfflineDownloadCachedSource(
+    val subjectId: String,
+    val episodeId: String,
+    val sourcePayload: String,
 )
 
 sealed interface OfflineDownloadProgress {

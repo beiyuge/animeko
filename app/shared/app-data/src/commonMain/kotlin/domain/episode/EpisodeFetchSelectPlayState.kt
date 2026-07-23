@@ -293,12 +293,18 @@ class EpisodeFetchSelectPlayState(
 
                         // `filterNotNull()` is needed. Even when media is unselect, we should not stop the player.
                         fetchSelect.mediaSelector.selected.filterNotNull().collectLatest { media ->
-                            val episodeInfo = episodeSession.infoBundleFlow
+                            val infoBundle = episodeSession.infoBundleFlow
                                 .filterNotNull()
                                 .first()
-                                .episodeInfo
+                            val episodeInfo = infoBundle.episodeInfo
 
-                            playerSession.loadMedia(media, episodeInfo.toEpisodeMetadata())
+                            playerSession.loadMedia(
+                                media,
+                                episodeInfo.toEpisodeMetadata().copy(
+                                    subjectId = infoBundle.subjectId,
+                                    episodeId = infoBundle.episodeId,
+                                ),
+                            )
                             onMediaLoaded(episodeInfo.episodeId)
                         }
                     }
