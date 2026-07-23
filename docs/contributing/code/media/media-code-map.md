@@ -78,6 +78,15 @@
 8. `PlayerSession.loadMedia(...)` 通过 `MediaResolver.resolve(...)` 解析，打开得到的
    `MediaDataProvider`，然后调用 `player.setMediaData(...)`。
 
+## Android 系统媒体与 HDR 状态
+
+- `EpisodeViewModel` 创建 `SystemMediaSessionRegistration`，其生命周期与当前剧集播放器一致。
+- Android actual 将 mediamp 的 `ExoPlayer` 注册到 `AniMediaSessionService` 中的 Media3
+  `MediaSession`，让系统媒体面板、锁屏和媒体按键控制同一个播放器；非 Android actual 目前为空实现。
+- Android 播放器使用 `USAGE_MEDIA` / `AUDIO_CONTENT_TYPE_MOVIE`，并交由 ExoPlayer 自动处理音频焦点。
+- HDR 状态来自 ExoPlayer 当前选中的视频轨道 `ColorInfo`：仅 PQ/ST2084 或 HLG 传输特性会标记为
+  HDR。该状态由 `VideoStatistics` 传到资源摘要，在数据源名称后显示 `HDR` 徽标。
+
 ## 过滤与选择
 
 - 过滤/排序主实现：`MediaSelectorFilterSortAlgorithm`。算法细节见

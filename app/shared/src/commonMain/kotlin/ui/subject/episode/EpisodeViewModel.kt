@@ -104,6 +104,8 @@ import me.him188.ani.app.domain.settings.GetDanmakuRegexFilterListFlowUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCase
 import me.him188.ani.app.domain.usecase.GlobalKoin
 import me.him188.ani.app.platform.Context
+import me.him188.ani.app.platform.media.SystemMediaMetadata
+import me.him188.ani.app.platform.media.createSystemMediaSessionRegistration
 import me.him188.ani.app.ui.comment.BangumiCommentSticker
 import me.him188.ani.app.ui.comment.CommentEditorState
 import me.him188.ani.app.ui.comment.CommentMapperContext
@@ -237,6 +239,7 @@ sealed class EpisodePageLoadError {
  *
  * @see EpisodeFetchSelectPlayState
  */
+@OptIn(UnsafeEpisodeSessionApi::class)
 @Stable
 class EpisodeViewModel(
     val subjectId: Int,
@@ -275,6 +278,8 @@ class EpisodeViewModel(
 
     val player: MediampPlayer =
         playerStateFactory.create(context, backgroundScope.coroutineContext)
+
+    private val systemMediaSession = createSystemMediaSessionRegistration(context, player)
 
     @OptIn(UnsafeEpisodeSessionApi::class)
     private val fetchPlayState = EpisodeFetchSelectPlayState(
@@ -373,6 +378,7 @@ class EpisodeViewModel(
         mediaSourceInfoProvider,
         mediaSourceLoading = fetchPlayState.episodeSessionFlow.flatMapLatest { it.mediaSourceLoadingFlow },
         pikPakPlaybackState = pikPakPlaybackCoordinator.state,
+        isHdr = systemMediaSession.isHdr,
         backgroundScope,
     ).videoStatisticsFlow
 
@@ -995,6 +1001,23 @@ class EpisodeViewModel(
     }
 
     init {
+        launchInBackground {
+            combine(
+                subjectEpisodeInfoBundleFlow.filterNotNull(),
+                videoStatisticsFlow,
+            ) { bundle, statistics ->
+                SystemMediaMetadata(
+                    title = bundle.subjectInfo.displayName,
+                    episodeTitle = buildList {
+                        add(bundle.episodeInfo.sort.toString())
+                        bundle.episodeInfo.displayName.takeIf(String::isNotBlank)?.let(::add)
+                    }.joinToString(" · "),
+                    sourceName = statistics.playingMediaSourceInfo?.displayName,
+                    artworkUri = bundle.subjectInfo.imageLarge,
+                )
+            }.distinctUntilChanged().collect(systemMediaSession::updateMetadata)
+        }
+
         // 跳过 OP 和 ED
         launchInBackground {
             settingsRepository.videoScaffoldConfig.flow
@@ -1021,6 +1044,7 @@ class EpisodeViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        systemMediaSession.close()
         turnstileState.cancel()
         webCaptchaCoordinator.cancelAutoResolutionRequests()
         backgroundScope.launch(NonCancellable + CoroutineName("EpisodeViewModel#onCleared")) {

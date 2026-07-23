@@ -155,6 +155,8 @@ kotlin {
         api(libs.datastore)
         api(libs.datastore.preferences)
         api(libs.androidx.appcompat)
+        implementation(libs.androidx.media3.exoplayer)
+        implementation(libs.androidx.media3.session)
         api(libs.androidx.media)
         api(libs.androidx.core.ktx)
         api(libs.androidx.activity.compose)

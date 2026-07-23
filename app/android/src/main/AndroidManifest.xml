@@ -76,6 +76,15 @@
                     android:value="true" />
         </service>
 
+        <service
+                android:name="me.him188.ani.app.platform.media.AniMediaSessionService"
+                android:exported="true"
+                android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
         <provider
                 android:name="androidx.startup.InitializationProvider"
                 android:authorities="${applicationId}.androidx-startup"

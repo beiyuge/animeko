@@ -87,6 +87,7 @@ class VideoStatisticsCollector(
     private val mediaSourceInfoProvider: MediaSourceInfoProvider,
     mediaSourceLoading: Flow<Boolean>,
     pikPakPlaybackState: Flow<PikPakPlaybackState>,
+    isHdr: Flow<Boolean>,
     backgroundScope: CoroutineScope,
 ) {
     val videoStatisticsFlow: StateFlow<VideoStatistics> = kotlin.run {
@@ -104,6 +105,8 @@ class VideoStatisticsCollector(
             videoLoadingStateFlow,
         ) { media, sourceInfo, filename, loading, videoState ->
             VideoStatistics(media, sourceInfo, filename, loading, videoState)
+        }.combine(isHdr) { statistics, hdr ->
+            statistics.copy(isHdr = hdr)
         }.combine(pikPakPlaybackState) { statistics, pikPakState ->
             statistics.copy(pikPakPlaybackState = pikPakState)
         }.stateIn(
@@ -137,6 +140,7 @@ data class VideoStatistics(
     val mediaSourceLoading: Boolean,
     val videoLoadingState: VideoLoadingState,
     val pikPakPlaybackState: PikPakPlaybackState = PikPakPlaybackState(),
+    val isHdr: Boolean = false,
     val isPlaceholder: Boolean = false,
 ) {
     companion object {

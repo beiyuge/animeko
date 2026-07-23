@@ -120,6 +120,7 @@ fun MediaSelectorSummaryCard(
     summary: MediaSelectorSummary,
     onClickManualSelect: () -> Unit,
     modifier: Modifier = Modifier,
+    isHdr: Boolean = false,
 ) {
     val colors = MediaSelectorColors.calculate(summary)
     val summaryUpdated by rememberUpdatedState(summary)
@@ -212,7 +213,22 @@ fun MediaSelectorSummaryCard(
 
                         is MediaSelectorSummary.Selected -> {
                             ListItem(
-                                headlineContent = { Text(state.source.sourceName, softWrap = true, maxLines = 2) },
+                                headlineContent = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Text(
+                                            state.source.sourceName,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            softWrap = true,
+                                            maxLines = 2,
+                                        )
+                                        if (isHdr) {
+                                            HdrBadge()
+                                        }
+                                    }
+                                },
                                 commonModifiers,
                                 overlineContent = { Text(sourceText) },
                                 leadingContent = {

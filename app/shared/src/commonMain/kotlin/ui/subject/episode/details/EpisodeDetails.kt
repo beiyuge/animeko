@@ -478,12 +478,14 @@ fun EpisodeDetails(
                     mediaSelectorSummary,
                     onClickManualSelect = { showMediaSelector = true },
                     Modifier.fillMaxWidth().padding(innerPadding),
+                    isHdr = videoStatistics.isHdr,
                 )
             } else {
                 MediaSelectorSummaryBanner(
                     mediaSelectorSummary,
                     onClickSwitchSource = { showMediaSelector = true },
                     Modifier.fillMaxWidth().padding(innerPadding),
+                    isHdr = videoStatistics.isHdr,
                 )
             }
         },
