@@ -35,12 +35,6 @@ jobs:
             arch: aarch64
             jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz
             jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz.checksum
-          - label: macOS Intel
-            runner: macos-15-intel
-            platform: macos
-            arch: x86_64
-            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.6-osx-x64-b895.91.tar.gz
-            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.6-osx-x64-b895.91.tar.gz.checksum
           - label: Linux x86_64
             runner: ubuntu-24.04
             platform: linux
