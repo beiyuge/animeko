@@ -961,7 +961,9 @@ internal suspend fun collectPikPakFileCandidates(
             when {
                 entry.isFolder && entry.id.isNotEmpty() -> pendingFolders.addLast(entry.id)
                 entry.isFile && entry.id.isNotEmpty() && !isAnimekoMetadataFile(entry.name) -> {
-                    filesById.putIfAbsent(entry.id, CachedPikPakFile(entry.id, entry.name))
+                    if (entry.id !in filesById) {
+                        filesById[entry.id] = CachedPikPakFile(entry.id, entry.name)
+                    }
                 }
             }
         }
