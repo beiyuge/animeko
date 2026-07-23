@@ -5,6 +5,8 @@
 
 package me.him188.ani.app.domain.media.resolver
 
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +39,7 @@ class PikPakPlaybackCoordinator(
 ) {
     private val _state = MutableStateFlow(PikPakPlaybackState())
     val state: StateFlow<PikPakPlaybackState> = _state.asStateFlow()
+    private val localFallbackRequestsLock = SynchronizedObject()
     private val localFallbackRequests = mutableSetOf<String>()
 
     fun begin(mediaId: String) {
@@ -100,13 +103,13 @@ class PikPakPlaybackCoordinator(
 
     fun requestLocalFallback(mediaId: String) {
         torrentAccessPolicy.allowForCurrentPlayback(mediaId)
-        synchronized(localFallbackRequests) { localFallbackRequests += mediaId }
+        synchronized(localFallbackRequestsLock) { localFallbackRequests += mediaId }
         _state.update {
             it.copy(mediaId = mediaId, status = PikPakPlaybackState.Status.LocalAnitorrentFallback)
         }
     }
 
-    fun consumeLocalFallback(mediaId: String): Boolean = synchronized(localFallbackRequests) {
+    fun consumeLocalFallback(mediaId: String): Boolean = synchronized(localFallbackRequestsLock) {
         localFallbackRequests.remove(mediaId)
     }
 
@@ -120,7 +123,7 @@ class PikPakPlaybackCoordinator(
         val current = _state.value
         if (mediaId != null && current.mediaId != mediaId) return
         current.mediaId?.let { currentMediaId ->
-            synchronized(localFallbackRequests) { localFallbackRequests.remove(currentMediaId) }
+            synchronized(localFallbackRequestsLock) { localFallbackRequests.remove(currentMediaId) }
             torrentAccessPolicy.revokeTemporaryAccess(currentMediaId)
         }
         _state.value = PikPakPlaybackState()

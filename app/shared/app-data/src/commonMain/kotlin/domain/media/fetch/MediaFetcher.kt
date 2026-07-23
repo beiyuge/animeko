@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flatMapMerge
@@ -70,6 +71,8 @@ import me.him188.ani.utils.platform.collections.EnumMap
 import me.him188.ani.utils.platform.collections.ImmutableEnumMap
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * [MediaFetcher], 为支持从多个 [MediaSource] 并行获取 [Media] 的综合查询工具.
@@ -131,7 +134,8 @@ fun MediaFetchRequest.Companion.create(
 }
 
 class MediaFetcherConfig(
-    val enableBTFetcher: Boolean
+    val enableBTFetcher: Boolean,
+    val localCacheProbeTimeout: Duration = 5.seconds,
 ) { // 战未来
     companion object {
         val Default = MediaFetcherConfig(true)
@@ -382,9 +386,49 @@ class MediaSourceMediaFetcher(
             if (mediaSourceResults.isEmpty()) {
                 return@run flowOfEmptyList()
             }
-            combine(mediaSourceResults.map { it.results }) { lists ->
-                lists.asSequence().flatten().toList()
-            }.map { list ->
+
+            fun combineResults(results: List<MediaSourceFetchResult>): Flow<List<Media>> {
+                if (results.isEmpty()) return flowOf(emptyList())
+                return combine(results.map { it.results }) { lists ->
+                    lists.asSequence().flatten().toList()
+                }
+            }
+
+            val localCacheResults = mediaSourceResults.filter { it.kind == MediaSourceKind.LocalCache }
+            val onlineResults = mediaSourceResults.filter { it.kind != MediaSourceKind.LocalCache }
+            val combinedResults = when {
+                localCacheResults.isEmpty() -> combineResults(onlineResults)
+                onlineResults.isEmpty() -> combineResults(localCacheResults)
+                else -> {
+                    combine(
+                        combineResults(localCacheResults),
+                        combine(localCacheResults.map { it.state }) { states ->
+                            states.all {
+                                it is MediaSourceFetchState.Completed ||
+                                        it is MediaSourceFetchState.Disabled
+                            }
+                        },
+                        flow {
+                            delay(config.localCacheProbeTimeout)
+                            emit(true)
+                        }.onStart { emit(false) },
+                    ) { cached, localProbeCompleted, localProbeTimedOut ->
+                        when {
+                            cached.isNotEmpty() -> LocalCacheProbe.Hit(cached)
+                            localProbeCompleted || localProbeTimedOut -> LocalCacheProbe.Miss
+                            else -> LocalCacheProbe.Pending
+                        }
+                    }.distinctUntilChanged().flatMapLatest { probe ->
+                        when (probe) {
+                            is LocalCacheProbe.Hit -> flowOf(probe.cached)
+                            LocalCacheProbe.Miss -> combineResults(onlineResults)
+                            LocalCacheProbe.Pending -> emptyFlow()
+                        }
+                    }
+                }
+            }
+
+            combinedResults.map { list ->
                 list.distinctBy { it.mediaId } // distinct globally by id, just to be safe
             }.flowOn(flowContext)
                 .run {
@@ -451,6 +495,12 @@ class MediaSourceMediaFetcher(
     }
 
     private companion object {
+        private sealed interface LocalCacheProbe {
+            data class Hit(val cached: List<Media>) : LocalCacheProbe
+            data object Miss : LocalCacheProbe
+            data object Pending : LocalCacheProbe
+        }
+
         private val logger = logger<MediaSourceMediaFetcher>()
         private const val ENABLE_WATCHDOG = false
     }

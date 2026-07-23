@@ -15,11 +15,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
+import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.Media
+import me.him188.ani.datasources.api.unwrapCached
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
+import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
@@ -123,6 +127,18 @@ class OfflineDownloadMediaResolver(
                                 ?: media.originalTitle.takeIf(String::isNotBlank),
                             episodeTitle = episode.title.takeIf(String::isNotBlank),
                             episodeNumber = (episode.ep ?: episode.sort).toString(),
+                            cachedSource = episode.takeIf {
+                                it.subjectId != null && it.episodeId != null
+                            }?.let {
+                                OfflineDownloadCachedSource(
+                                    subjectId = it.subjectId.toString(),
+                                    episodeId = it.episodeId.toString(),
+                                    sourcePayload = DataStoreJson.encodeToString(
+                                        DefaultMedia.serializer(),
+                                        media.unwrapCached(),
+                                    ),
+                                )
+                            },
                         ),
                     )
                 } finally {

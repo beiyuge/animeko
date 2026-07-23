@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.io.IOException
+import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.domain.media.createTestDefaultMedia
 import me.him188.ani.app.domain.media.createTestMediaProperties
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
@@ -148,6 +149,34 @@ class OfflineDownloadMediaResolverTest {
                 episodeNumber = "02",
             ),
             engine.lastNaming,
+        )
+    }
+
+    @Test
+    fun `resolve - persists episode identity and original media in cloud mapping`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            resolveResult = ResolvedMedia(streamUrl = "https://cdn.example/signed.mp4"),
+        )
+
+        OfflineDownloadMediaResolver(engine).resolve(
+            magnetMedia,
+            EpisodeMetadata(
+                title = "第二集",
+                ep = EpisodeSort(2),
+                sort = EpisodeSort(2),
+                subjectId = 123,
+                episodeId = 456,
+            ),
+        )
+
+        val naming = requireNotNull(engine.lastNaming)
+        val cachedSource = requireNotNull(naming.cachedSource)
+        assertEquals("123", cachedSource.subjectId)
+        assertEquals("456", cachedSource.episodeId)
+        assertEquals(
+            magnetMedia,
+            DataStoreJson.decodeFromString(DefaultMedia.serializer(), cachedSource.sourcePayload),
         )
     }
 

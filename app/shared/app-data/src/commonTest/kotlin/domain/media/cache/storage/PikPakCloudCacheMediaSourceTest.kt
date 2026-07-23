@@ -1,0 +1,93 @@
+/*
+ * Copyright (C) 2024-2026 OpenAni and contributors.
+ * Use of this source code is governed by the GNU AGPLv3 license.
+ */
+
+package me.him188.ani.app.domain.media.cache.storage
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
+import me.him188.ani.app.data.persistent.DataStoreJson
+import me.him188.ani.app.domain.media.TestMediaList
+import me.him188.ani.datasources.api.CachedMedia
+import me.him188.ani.datasources.api.DefaultMedia
+import me.him188.ani.datasources.api.EpisodeSort
+import me.him188.ani.datasources.api.source.MediaFetchRequest
+import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
+import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadNaming
+import me.him188.ani.torrent.offline.ResolvedMedia
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+
+class PikPakCloudCacheMediaSourceTest {
+    @Test
+    fun `recreates cached media for the same episode`() = runTest {
+        val origin = TestMediaList.first()
+        val sourcePayload = DataStoreJson.encodeToString(DefaultMedia.serializer(), origin)
+        val engine = FakeEngine(
+            OfflineDownloadCachedSource(
+                subjectId = "123",
+                episodeId = "456",
+                sourcePayload = sourcePayload,
+            ),
+        )
+        val source = PikPakCloudCacheMediaSource(engine)
+
+        val match = source.fetch(request(subjectId = "123", episodeId = "456"))
+            .results.first()
+
+        val cached = assertIs<CachedMedia>(match.media)
+        assertEquals(
+            sourcePayload,
+            DataStoreJson.encodeToString(DefaultMedia.serializer(), assertIs<DefaultMedia>(cached.origin)),
+        )
+        assertEquals(source.mediaSourceId, cached.mediaSourceId)
+    }
+
+    @Test
+    fun `does not return cache from another episode`() = runTest {
+        val engine = FakeEngine(null)
+        val source = PikPakCloudCacheMediaSource(engine)
+
+        assertEquals(
+            emptyList(),
+            source.fetch(request(subjectId = "123", episodeId = "other")).results.toList(),
+        )
+    }
+
+    private fun request(subjectId: String, episodeId: String) = MediaFetchRequest(
+        subjectId = subjectId,
+        episodeId = episodeId,
+        subjectNames = listOf("Test"),
+        episodeSort = EpisodeSort(1),
+        episodeName = "EP1",
+    )
+
+    private class FakeEngine(
+        private val cachedSource: OfflineDownloadCachedSource?,
+    ) : OfflineDownloadEngine {
+        override val id: String = "pikpak"
+        override val displayName: String = "PikPak"
+        override val isSupported: StateFlow<Boolean> = MutableStateFlow(true)
+
+        override suspend fun resolve(
+            uri: String,
+            pickVideoFile: (List<String>) -> String?,
+            naming: OfflineDownloadNaming?,
+        ): ResolvedMedia = error("Not needed in test")
+
+        override suspend fun findCachedSource(
+            subjectId: String,
+            episodeId: String,
+        ): OfflineDownloadCachedSource? {
+            return cachedSource?.takeIf {
+                it.subjectId == subjectId && it.episodeId == episodeId
+            }
+        }
+    }
+}

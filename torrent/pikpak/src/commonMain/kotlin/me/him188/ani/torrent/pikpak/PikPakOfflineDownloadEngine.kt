@@ -48,6 +48,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
+import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
@@ -161,6 +162,7 @@ class PikPakOfflineDownloadEngine(
     // behind an earlier resolve.
     private val resolveMutex = Mutex()
     private val metadataMutex = Mutex()
+    private val metadataUploadMutex = Mutex()
     private val resolvedMediaCache = PikPakResolvedMediaCache()
     private var resolvedMediaCacheCredentials: PikPakCredentials? = null
     private val persistedMappings = mutableMapOf<String, PikPakFileMapping>()
@@ -368,6 +370,66 @@ class PikPakOfflineDownloadEngine(
             }
         }
 
+    override suspend fun findCachedSource(
+        subjectId: String,
+        episodeId: String,
+    ): OfflineDownloadCachedSource? {
+        val storageDir = metadataDirForCurrentAccount() ?: return null
+        findLocalCachedSource(storageDir, subjectId, episodeId)?.let { return it }
+
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid) ?: return null
+        return runCatchingCancellable {
+            val client = clientFor(creds)
+            client.login()
+            val slotId = client.listFiles(parentId = "")
+                .firstOrNull { it.isFolder && it.name == slotFolderName }
+                ?.id
+                ?: return@runCatchingCancellable null
+            val mapping = findCloudCachedSourceMapping(
+                slotId = slotId,
+                subjectId = subjectId,
+                episodeId = episodeId,
+                listChildren = client::listFiles,
+                loadMapping = { loadCloudMapping(client, it) },
+            ) ?: return@runCatchingCancellable null
+            saveLocalMapping(storageDir, mapping)
+            mapping.cachedSource
+        }.onFailure {
+            logger.warn(it) { "[pikpak] could not recover cached source mapping from cloud" }
+        }.getOrNull()
+    }
+
+    private suspend fun findLocalCachedSource(
+        storageDir: SystemPath,
+        subjectId: String,
+        episodeId: String,
+    ): OfflineDownloadCachedSource? = metadataMutex.withLock {
+        if (!storageDir.exists()) return@withLock null
+        storageDir.list().asSequence()
+            .filter { isAnimekoMetadataFile(it.name) }
+            .map { it.inSystem }
+            .mapNotNull { loadLocalMapping(it) }
+            .mapNotNull(PikPakFileMapping::cachedSource)
+            .firstOrNull { it.matches(subjectId, episodeId) }
+    }
+
+    private suspend fun saveLocalMapping(
+        storageDir: SystemPath,
+        mapping: PikPakFileMapping,
+    ) = metadataMutex.withLock {
+        storageDir.createDirectories()
+        storageDir.resolve(mappingFileName(mapping.providerFileId))
+            .writeText(metadataJson.encodeToString(mapping))
+        persistedMappings[mapping.providerFileId] = mapping
+    }
+
+    private fun loadLocalMapping(localFile: SystemPath): PikPakFileMapping? =
+        runCatching {
+            metadataJson.decodeFromString<PikPakFileMapping>(localFile.readText())
+        }.onFailure {
+            logger.warn(it) { "[pikpak] could not read cached source mapping $localFile" }
+        }.getOrNull()
+
     /**
      * Flattens everything currently in the slot into a `(id, name)` list of
      * video-file candidates. Handles both layouts the slot can be in:
@@ -450,23 +512,20 @@ class PikPakOfflineDownloadEngine(
         if (naming == null || detail.parentId.isEmpty() || detail.id.isEmpty()) return
         scope.launch {
             try {
-                metadataMutex.withLock {
+                metadataUploadMutex.withLock {
                     val mappingName = mappingFileName(detail.id)
                     val localFile = storageDir.resolve(mappingName)
                     val existing = client.listFiles(parentId = detail.parentId)
                         .filter { it.isFile && it.name == mappingName }
-                    var previous = loadLocalMapping(localFile, detail.id)
+                    var previous = metadataMutex.withLock {
+                        loadLocalMapping(localFile, detail.id)
+                    }
                     if (previous == null) {
                         for (entry in existing) {
                             previous = loadCloudMapping(client, entry, detail.id)
                             if (previous != null) break
                         }
                     }
-
-                    // An existing cloud mapping may be the only remaining record of the original
-                    // provider filename after app data was cleared. Do not overwrite it with the
-                    // already-renamed visible name when there is no trusted local copy to merge.
-                    if (previous == null && existing.isNotEmpty()) return@withLock
 
                     val mapping = updatedFileMapping(
                         sourceKey = sourceKey,
@@ -475,19 +534,24 @@ class PikPakOfflineDownloadEngine(
                         observedFileName = detail.name,
                         previous = previous,
                     )
-                    storageDir.createDirectories()
-                    localFile.writeText(metadataJson.encodeToString(mapping))
+                    val shouldPersist = metadataMutex.withLock {
+                        storageDir.createDirectories()
+                        localFile.writeText(metadataJson.encodeToString(mapping))
+                        persistedMappings[detail.id] != mapping
+                    }
 
                     persistMappingBeforeRename(
                         mapping = mapping,
                         observedFileName = detail.name,
                         persist = {
-                            if (persistedMappings[detail.id] != mapping) {
+                            if (shouldPersist) {
                                 if (existing.isNotEmpty()) {
                                     client.batchDelete(existing.map(FileStat::id))
                                 }
                                 client.upload(detail.parentId, localFile.path)
-                                persistedMappings[detail.id] = mapping
+                                metadataMutex.withLock {
+                                    persistedMappings[detail.id] = mapping
+                                }
                             }
                         },
                         rename = { targetName ->
@@ -505,27 +569,23 @@ class PikPakOfflineDownloadEngine(
 
     private fun loadLocalMapping(localFile: SystemPath, providerFileId: String): PikPakFileMapping? {
         if (!localFile.exists()) return null
-        return runCatching {
-            metadataJson.decodeFromString<PikPakFileMapping>(localFile.readText())
-                .takeIf { it.providerFileId == providerFileId }
-        }.onFailure {
-            logger.warn(it) { "[pikpak] could not read local mapping for file $providerFileId" }
-        }.getOrNull()
+        return loadLocalMapping(localFile)
+            ?.takeIf { it.providerFileId == providerFileId }
     }
 
     private suspend fun loadCloudMapping(
         client: PikPakClient,
         entry: FileStat,
-        providerFileId: String,
+        providerFileId: String? = null,
     ): PikPakFileMapping? = try {
         val detail = client.getFile(entry.id)
         val url = detail.downloadUrl ?: detail.webContentLink.takeIf(String::isNotEmpty) ?: return null
         metadataJson.decodeFromString<PikPakFileMapping>(sharedHttp.get(url).bodyAsText())
-            .takeIf { it.providerFileId == providerFileId }
+            .takeIf { providerFileId == null || it.providerFileId == providerFileId }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {
-        logger.warn(e) { "[pikpak] could not read cloud mapping ${entry.id} for file $providerFileId" }
+        logger.warn(e) { "[pikpak] could not read cloud mapping ${entry.id}" }
         null
     }
 
@@ -550,7 +610,7 @@ class PikPakOfflineDownloadEngine(
     }
 
     private fun metadataDirForCurrentAccount(): SystemPath? {
-        val account = resolvedMediaCacheCredentials?.username ?: return null
+        val account = credentials.value?.username?.takeIf(String::isNotEmpty) ?: return null
         return metadataStorageDir?.resolve("account-${sha256HexShort(account)}")
     }
 
@@ -772,13 +832,52 @@ private fun safeFileId(value: String, maxLength: Int): String =
 private fun isAnimekoMetadataFile(name: String): Boolean =
     name.startsWith(MAPPING_FILE_PREFIX) && name.endsWith(".json", ignoreCase = true)
 
+internal suspend fun findCloudCachedSourceMapping(
+    slotId: String,
+    subjectId: String,
+    episodeId: String,
+    listChildren: suspend (parentId: String) -> List<FileStat>,
+    loadMapping: suspend (entry: FileStat) -> PikPakFileMapping?,
+): PikPakFileMapping? {
+    val pendingFolders = ArrayDeque<String>()
+    val visitedFolders = mutableSetOf<String>()
+    val matches = mutableListOf<Pair<FileStat, PikPakFileMapping>>()
+    pendingFolders.addLast(slotId)
+
+    while (pendingFolders.isNotEmpty()) {
+        val parentId = pendingFolders.removeFirst()
+        if (!visitedFolders.add(parentId)) continue
+        for (entry in listChildren(parentId)) {
+            if (entry.trashed || entry.id.isEmpty()) continue
+            when {
+                entry.isFolder -> pendingFolders.addLast(entry.id)
+                entry.isFile && isAnimekoMetadataFile(entry.name) -> {
+                    val mapping = loadMapping(entry) ?: continue
+                    if (mapping.cachedSource?.matches(subjectId, episodeId) == true) {
+                        matches += entry to mapping
+                    }
+                }
+            }
+        }
+    }
+
+    return matches.maxByOrNull { (entry) ->
+        entry.modifiedTime.ifEmpty { entry.createdTime }
+    }?.second
+}
+
+private fun OfflineDownloadCachedSource.matches(subjectId: String, episodeId: String): Boolean =
+    this.subjectId == subjectId &&
+            this.episodeId == episodeId &&
+            sourcePayload.isNotBlank()
+
 @Serializable
 internal data class PikPakFileMapping(
-    val version: Int = 1,
     val sourceKey: String,
     val subjectName: String?,
     val episodeTitle: String?,
     val episodeNumber: String?,
+    val cachedSource: OfflineDownloadCachedSource?,
     val providerFileId: String,
     val originalFileName: String,
     val fileName: String,
@@ -797,6 +896,7 @@ internal fun updatedFileMapping(
         subjectName = naming.subjectName,
         episodeTitle = naming.episodeTitle,
         episodeNumber = naming.episodeNumber,
+        cachedSource = naming.cachedSource,
         providerFileId = providerFileId,
         originalFileName = originalFileName,
         fileName = readableVideoFileName(originalFileName, providerFileId, naming),
@@ -861,7 +961,9 @@ internal suspend fun collectPikPakFileCandidates(
             when {
                 entry.isFolder && entry.id.isNotEmpty() -> pendingFolders.addLast(entry.id)
                 entry.isFile && entry.id.isNotEmpty() && !isAnimekoMetadataFile(entry.name) -> {
-                    filesById.putIfAbsent(entry.id, CachedPikPakFile(entry.id, entry.name))
+                    if (entry.id !in filesById) {
+                        filesById[entry.id] = CachedPikPakFile(entry.id, entry.name)
+                    }
                 }
             }
         }

@@ -73,6 +73,8 @@ data class EpisodeMetadata(
     val title: String,
     val ep: EpisodeSort?,
     val sort: EpisodeSort,
+    val subjectId: Int? = null,
+    val episodeId: Int? = null,
 )
 
 fun EpisodeInfo.toEpisodeMetadata(): EpisodeMetadata {
