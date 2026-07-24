@@ -148,8 +148,11 @@ fun MediaSelectorSummaryBanner(
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    state.cacheProviderName?.let {
+                                        MediaSelectorSourceBadge(it)
+                                    }
                                     if (isHdr) {
-                                        HdrBadge()
+                                        MediaSelectorSourceBadge("HDR", bold = true)
                                     }
                                 }
                                 if (!state.isPerfectMatch) {
@@ -177,7 +180,11 @@ fun MediaSelectorSummaryBanner(
 }
 
 @Composable
-internal fun HdrBadge(modifier: Modifier = Modifier) {
+internal fun MediaSelectorSourceBadge(
+    label: String,
+    modifier: Modifier = Modifier,
+    bold: Boolean = false,
+) {
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.extraSmall,
@@ -186,10 +193,10 @@ internal fun HdrBadge(modifier: Modifier = Modifier) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Text(
-            "HDR",
+            label,
             modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
             style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
         )
     }

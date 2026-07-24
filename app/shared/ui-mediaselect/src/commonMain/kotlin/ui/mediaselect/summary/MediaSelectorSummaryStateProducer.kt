@@ -26,8 +26,11 @@ import me.him188.ani.app.domain.media.selector.MaybeExcludedMedia
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.UnsafeOriginalMediaAccess
 import me.him188.ani.app.domain.media.selector.isPerfectMatch
+import me.him188.ani.datasources.api.CachedMedia
+import me.him188.ani.datasources.api.unwrapCached
 import me.him188.ani.datasources.api.source.MediaSourceInfo
 import me.him188.ani.datasources.api.source.MediaSourceKind
+import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.utils.platform.collections.tupleOf
 import kotlin.time.Duration.Companion.seconds
 
@@ -79,17 +82,7 @@ class MediaSelectorSummaryStateProducer(
             selectedMaybeExcludedMediaFlow.map { selected ->
                 when {
                     selected != null -> {
-                        MediaSelectorSummary.Selected(
-                            mediaSourceInstances.find { it.mediaSourceId == selected.original.mediaSourceId }
-                                ?.info
-                                ?.toSummary()
-                                ?: MediaSelectorSourceSummary(
-                                    sourceName = selected.original.mediaSourceId,
-                                    sourceIconUrl = "",
-                                ),
-                            selected.original.originalTitle,
-                            isPerfectMatch = selected.isPerfectMatch(),
-                        )
+                        createSelectedSummary(selected, mediaSourceInstances)
                     }
 
                     mediaSelectorSettings.preferKind == MediaSourceKind.WEB -> {
@@ -120,7 +113,34 @@ val MediaSelector.selectedMaybeExcludedMediaFlow: Flow<MaybeExcludedMedia?>
             filteredCandidates.first() // No need to subscribe to flow change. When selected is updated, filteredCandidates should have already been updated. 
                 .firstOrNull { it.original === selected } // identity check is enough and fast
         }
-    }
+}
+
+@OptIn(UnsafeOriginalMediaAccess::class)
+internal fun createSelectedSummary(
+    selected: MaybeExcludedMedia,
+    mediaSourceInstances: List<MediaSourceInfoWithId>,
+): MediaSelectorSummary.Selected {
+    val selectedMedia = selected.original
+    val origin = selectedMedia.unwrapCached()
+
+    fun findSource(sourceId: String): MediaSourceInfo? =
+        mediaSourceInstances.find { it.mediaSourceId == sourceId }?.info
+
+    val cacheProviderName = (selectedMedia as? CachedMedia)
+        ?.takeIf { it.location == MediaSourceLocation.Online }
+        ?.let { findSource(it.mediaSourceId)?.displayName }
+
+    return MediaSelectorSummary.Selected(
+        source = findSource(origin.mediaSourceId)?.toSummary()
+            ?: MediaSelectorSourceSummary(
+                sourceName = origin.mediaSourceId,
+                sourceIconUrl = "",
+            ),
+        mediaTitle = origin.originalTitle,
+        isPerfectMatch = selected.isPerfectMatch(),
+        cacheProviderName = cacheProviderName,
+    )
+}
 
 private fun MediaSourceInfo.toSummary() =
     MediaSelectorSourceSummary(

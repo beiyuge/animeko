@@ -106,6 +106,7 @@ sealed class MediaSelectorSummary {
         val source: MediaSelectorSourceSummary,
         val mediaTitle: String,
         val isPerfectMatch: Boolean,
+        val cacheProviderName: String? = null,
     ) : MediaSelectorSummary() {
         override val typeId get() = 3
     }
@@ -224,8 +225,11 @@ fun MediaSelectorSummaryCard(
                                             softWrap = true,
                                             maxLines = 2,
                                         )
+                                        state.cacheProviderName?.let {
+                                            MediaSelectorSourceBadge(it)
+                                        }
                                         if (isHdr) {
-                                            HdrBadge()
+                                            MediaSelectorSourceBadge("HDR", bold = true)
                                         }
                                     }
                                 },

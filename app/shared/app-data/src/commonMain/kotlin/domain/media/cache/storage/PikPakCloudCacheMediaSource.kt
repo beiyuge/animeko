@@ -23,6 +23,7 @@ import me.him188.ani.datasources.api.source.MediaSource
 import me.him188.ani.datasources.api.source.MediaSourceInfo
 import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.datasources.api.source.MediaSourceLocation
+import me.him188.ani.datasources.api.source.definitelyMatches
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
@@ -39,7 +40,7 @@ class PikPakCloudCacheMediaSource(
     override val kind: MediaSourceKind = MediaSourceKind.LocalCache
     override val location: MediaSourceLocation = MediaSourceLocation.Online
     override val info: MediaSourceInfo = MediaSourceInfo(
-        displayName = "PikPak 云端缓存",
+        displayName = "PikPak",
         description = "PikPak 中已缓存的剧集",
         isSpecial = true,
     )
@@ -49,25 +50,29 @@ class PikPakCloudCacheMediaSource(
 
     override suspend fun fetch(query: MediaFetchRequest): SizedSource<MediaMatch> {
         return SinglePagePagedSource {
-            val cachedSource = engine.findCachedSource(query.subjectId, query.episodeId)
-                ?: return@SinglePagePagedSource emptyList<MediaMatch>().asFlow()
-            val origin = runCatching {
-                DataStoreJson.decodeFromString(DefaultMedia.serializer(), cachedSource.sourcePayload)
-            }.onFailure {
-                logger.warn(it) { "Could not decode PikPak cached source for episode ${query.episodeId}" }
-            }.getOrNull() ?: return@SinglePagePagedSource emptyList<MediaMatch>().asFlow()
+            engine.findCachedSources(query.subjectId, query.episodeId)
+                .distinctBy { it.sourcePayload }
+                .mapNotNull { cachedSource ->
+                    val origin = runCatching {
+                        DataStoreJson.decodeFromString(DefaultMedia.serializer(), cachedSource.sourcePayload)
+                    }.onFailure {
+                        logger.warn(it) {
+                            "Could not decode PikPak cached source from episode " +
+                                    "${cachedSource.episodeId} for episode ${query.episodeId}"
+                        }
+                    }.getOrNull() ?: return@mapNotNull null
 
-            listOf(
-                MediaMatch(
-                    CachedMedia(
-                        origin = origin,
-                        cacheMediaSourceId = mediaSourceId,
-                        download = origin.download,
-                        location = MediaSourceLocation.Online,
-                    ),
-                    MatchKind.EXACT,
-                ),
-            ).asFlow()
+                    MediaMatch(
+                        CachedMedia(
+                            origin = origin,
+                            cacheMediaSourceId = mediaSourceId,
+                            download = origin.download,
+                            location = MediaSourceLocation.Online,
+                        ),
+                        if (cachedSource.episodeId == query.episodeId) MatchKind.EXACT else MatchKind.FUZZY,
+                    ).takeIf { it.definitelyMatches(query) }
+                }
+                .asFlow()
         }
     }
 

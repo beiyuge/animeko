@@ -15,7 +15,9 @@ import me.him188.ani.app.domain.media.TestMediaList
 import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.EpisodeSort
+import me.him188.ani.datasources.api.source.MatchKind
 import me.him188.ani.datasources.api.source.MediaFetchRequest
+import me.him188.ani.datasources.api.topic.EpisodeRange
 import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
@@ -47,24 +49,76 @@ class PikPakCloudCacheMediaSourceTest {
             DataStoreJson.encodeToString(DefaultMedia.serializer(), assertIs<DefaultMedia>(cached.origin)),
         )
         assertEquals(source.mediaSourceId, cached.mediaSourceId)
+        assertEquals(MatchKind.EXACT, match.kind)
     }
 
     @Test
-    fun `does not return cache from another episode`() = runTest {
-        val engine = FakeEngine(null)
+    fun `reuses a cached season source for another covered episode`() = runTest {
+        val origin = TestMediaList.first().copy(
+            episodeRange = EpisodeRange.range(1, 12),
+        )
+        val engine = FakeEngine(
+            OfflineDownloadCachedSource(
+                subjectId = "123",
+                episodeId = "456",
+                sourcePayload = DataStoreJson.encodeToString(DefaultMedia.serializer(), origin),
+            ),
+        )
+        val source = PikPakCloudCacheMediaSource(engine)
+
+        val match = source.fetch(
+            request(
+                subjectId = "123",
+                episodeId = "789",
+                episodeSort = EpisodeSort(2),
+            ),
+        ).results.first()
+
+        assertEquals(
+            DataStoreJson.encodeToString(DefaultMedia.serializer(), origin),
+            DataStoreJson.encodeToString(
+                DefaultMedia.serializer(),
+                assertIs<DefaultMedia>(assertIs<CachedMedia>(match.media).origin),
+            ),
+        )
+        assertEquals(MatchKind.FUZZY, match.kind)
+    }
+
+    @Test
+    fun `does not reuse a single episode source for another episode`() = runTest {
+        val origin = TestMediaList.first().copy(
+            episodeRange = EpisodeRange.single(EpisodeSort(1)),
+        )
+        val engine = FakeEngine(
+            OfflineDownloadCachedSource(
+                subjectId = "123",
+                episodeId = "456",
+                sourcePayload = DataStoreJson.encodeToString(DefaultMedia.serializer(), origin),
+            ),
+        )
         val source = PikPakCloudCacheMediaSource(engine)
 
         assertEquals(
             emptyList(),
-            source.fetch(request(subjectId = "123", episodeId = "other")).results.toList(),
+            source.fetch(
+                request(
+                    subjectId = "123",
+                    episodeId = "789",
+                    episodeSort = EpisodeSort(2),
+                ),
+            ).results.toList(),
         )
     }
 
-    private fun request(subjectId: String, episodeId: String) = MediaFetchRequest(
+    private fun request(
+        subjectId: String,
+        episodeId: String,
+        episodeSort: EpisodeSort = EpisodeSort(1),
+    ) = MediaFetchRequest(
         subjectId = subjectId,
         episodeId = episodeId,
         subjectNames = listOf("Test"),
-        episodeSort = EpisodeSort(1),
+        episodeSort = episodeSort,
         episodeName = "EP1",
     )
 
@@ -88,6 +142,13 @@ class PikPakCloudCacheMediaSourceTest {
             return cachedSource?.takeIf {
                 it.subjectId == subjectId && it.episodeId == episodeId
             }
+        }
+
+        override suspend fun findCachedSources(
+            subjectId: String,
+            episodeId: String,
+        ): List<OfflineDownloadCachedSource> {
+            return listOfNotNull(cachedSource).filter { it.subjectId == subjectId }
         }
     }
 }

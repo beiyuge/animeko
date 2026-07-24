@@ -493,14 +493,7 @@ run {
 
     releaseMatrixInstances = listOf(
         ghWin, // win installer
-        selfMac15.copy(
-            buildAllAndroidAbis = true,
-            uploadApk = false,
-            uploadDesktopInstallers = false,
-            extraGradleArgs = selfMac15.extraGradleArgs.filterNot { it.startsWith("-P$ANI_ANDROID_ABIS=") },
-        ), // android apks
-        ghMac15AppleSilicon, // macos AArch64 installer
-        ghMac15Intel, // macos x64 portable
+        ghMac15AppleSilicon.copy(enableIos = false), // macos AArch64 installer
         ghUbuntu2404, // linux app image + Android APKs
     )
 }
@@ -1933,28 +1926,30 @@ class WithMatrix(
                     tasks = arrayOf(":ci-helper:uploadAndroidApkQR", "\"--no-configuration-cache\""),
                     env = ciHelperSecrets,
                 )
-                uses(
-                    name = "Generate QR code for iOS (GitHub)",
-                    `if` = condition,
-                    action = Qrcode_Untyped(
-                        text_Untyped = """https://github.com/open-ani/animeko/releases/download/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
-                        path_Untyped = "ipa-qrcode-github.png",
-                    ),
-                )
-                uses(
-                    name = "Generate QR code for iOS (Cloudflare)",
-                    `if` = condition,
-                    action = Qrcode_Untyped(
-                        text_Untyped = """https://d.myani.org/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
-                        path_Untyped = "ipa-qrcode-cloudflare.png",
-                    ),
-                )
-                runGradle(
-                    name = "Upload QR code",
-                    `if` = condition,
-                    tasks = arrayOf(":ci-helper:uploadIosIpaQR", "\"--no-configuration-cache\""),
-                    env = ciHelperSecrets,
-                )
+                if (releaseMatrixInstances.any { it.uploadIpa }) {
+                    uses(
+                        name = "Generate QR code for iOS (GitHub)",
+                        `if` = condition,
+                        action = Qrcode_Untyped(
+                            text_Untyped = """https://github.com/open-ani/animeko/releases/download/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
+                            path_Untyped = "ipa-qrcode-github.png",
+                        ),
+                    )
+                    uses(
+                        name = "Generate QR code for iOS (Cloudflare)",
+                        `if` = condition,
+                        action = Qrcode_Untyped(
+                            text_Untyped = """https://d.myani.org/${expr { gitTag.tagExpr }}/ani-${expr { gitTag.tagVersionExpr }}.ipa""",
+                            path_Untyped = "ipa-qrcode-cloudflare.png",
+                        ),
+                    )
+                    runGradle(
+                        name = "Upload QR code",
+                        `if` = condition,
+                        tasks = arrayOf(":ci-helper:uploadIosIpaQR", "\"--no-configuration-cache\""),
+                        env = ciHelperSecrets,
+                    )
+                }
             }
         }
 

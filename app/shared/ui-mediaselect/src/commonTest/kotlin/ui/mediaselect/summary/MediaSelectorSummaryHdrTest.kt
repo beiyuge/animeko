@@ -60,4 +60,23 @@ class MediaSelectorSummaryHdrTest {
 
         onNodeWithText("HDR").assertDoesNotExist()
     }
+
+    @Test
+    fun `selected cloud cache shows provider badge after original source name`() = runAniComposeUiTest {
+        setContent {
+            ProvideCompositionLocalsForPreview {
+                MaterialTheme {
+                    MediaSelectorSummaryBanner(
+                        summary = selected.copy(cacheProviderName = "PikPak"),
+                        onClickSwitchSource = {},
+                        modifier = Modifier.width(360.dp),
+                    )
+                }
+            }
+        }
+
+        onNodeWithText("蜜柑计划 (CN)").assertExists()
+        onNodeWithText("PikPak").assertExists()
+        onNodeWithText("Episode 03").assertExists()
+    }
 }

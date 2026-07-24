@@ -66,6 +66,19 @@ interface OfflineDownloadEngine {
      * original media candidate without querying online media sources again.
      */
     suspend fun findCachedSource(subjectId: String, episodeId: String): OfflineDownloadCachedSource? = null
+
+    /**
+     * Returns cached source candidates for an episode, ordered with an exact episode mapping first.
+     *
+     * A multi-file source may cover episodes other than the one that originally created its
+     * mapping. Implementations may therefore include mappings from the same subject whose episode
+     * id differs. The app owns [OfflineDownloadCachedSource.sourcePayload] and must verify that a
+     * candidate covers the requested episode before exposing it as a cache hit.
+     */
+    suspend fun findCachedSources(
+        subjectId: String,
+        episodeId: String,
+    ): List<OfflineDownloadCachedSource> = listOfNotNull(findCachedSource(subjectId, episodeId))
 }
 
 /** User-facing names that a provider may apply to its durable cloud files. */

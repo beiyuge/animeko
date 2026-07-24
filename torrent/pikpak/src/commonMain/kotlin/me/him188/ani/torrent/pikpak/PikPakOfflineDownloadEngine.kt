@@ -373,44 +373,56 @@ class PikPakOfflineDownloadEngine(
     override suspend fun findCachedSource(
         subjectId: String,
         episodeId: String,
-    ): OfflineDownloadCachedSource? {
-        val storageDir = metadataDirForCurrentAccount() ?: return null
-        findLocalCachedSource(storageDir, subjectId, episodeId)?.let { return it }
+    ): OfflineDownloadCachedSource? =
+        findCachedSources(subjectId, episodeId)
+            .firstOrNull { it.matches(subjectId, episodeId) }
 
-        val creds = credentials.value?.takeIf(PikPakCredentials::isValid) ?: return null
+    override suspend fun findCachedSources(
+        subjectId: String,
+        episodeId: String,
+    ): List<OfflineDownloadCachedSource> {
+        val storageDir = metadataDirForCurrentAccount() ?: return emptyList()
+        val localMappings = findLocalCachedSourceMappings(storageDir, subjectId, episodeId)
+        if (localMappings.isNotEmpty()) {
+            return localMappings.mapNotNull(PikPakFileMapping::cachedSource)
+        }
+
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid) ?: return emptyList()
         return runCatchingCancellable {
             val client = clientFor(creds)
             client.login()
             val slotId = client.listFiles(parentId = "")
                 .firstOrNull { it.isFolder && it.name == slotFolderName }
                 ?.id
-                ?: return@runCatchingCancellable null
-            val mapping = findCloudCachedSourceMapping(
+                ?: return@runCatchingCancellable emptyList()
+            val mappings = findCloudCachedSourceMappings(
                 slotId = slotId,
                 subjectId = subjectId,
                 episodeId = episodeId,
                 listChildren = client::listFiles,
                 loadMapping = { loadCloudMapping(client, it) },
-            ) ?: return@runCatchingCancellable null
-            saveLocalMapping(storageDir, mapping)
-            mapping.cachedSource
+            )
+            mappings.forEach { saveLocalMapping(storageDir, it) }
+            mappings.mapNotNull(PikPakFileMapping::cachedSource)
         }.onFailure {
-            logger.warn(it) { "[pikpak] could not recover cached source mapping from cloud" }
-        }.getOrNull()
+            logger.warn(it) { "[pikpak] could not recover cached source mappings from cloud" }
+        }.getOrElse { emptyList() }
     }
 
-    private suspend fun findLocalCachedSource(
+    private suspend fun findLocalCachedSourceMappings(
         storageDir: SystemPath,
         subjectId: String,
         episodeId: String,
-    ): OfflineDownloadCachedSource? = metadataMutex.withLock {
-        if (!storageDir.exists()) return@withLock null
+    ): List<PikPakFileMapping> = metadataMutex.withLock {
+        if (!storageDir.exists()) return@withLock emptyList()
         storageDir.list().asSequence()
             .filter { isAnimekoMetadataFile(it.name) }
             .map { it.inSystem }
             .mapNotNull { loadLocalMapping(it) }
-            .mapNotNull(PikPakFileMapping::cachedSource)
-            .firstOrNull { it.matches(subjectId, episodeId) }
+            .filter { it.cachedSource?.matchesSubject(subjectId) == true }
+            .sortedByDescending { it.cachedSource?.episodeId == episodeId }
+            .distinctBy(PikPakFileMapping::sourceKey)
+            .toList()
     }
 
     private suspend fun saveLocalMapping(
@@ -838,7 +850,22 @@ internal suspend fun findCloudCachedSourceMapping(
     episodeId: String,
     listChildren: suspend (parentId: String) -> List<FileStat>,
     loadMapping: suspend (entry: FileStat) -> PikPakFileMapping?,
-): PikPakFileMapping? {
+): PikPakFileMapping? =
+    findCloudCachedSourceMappings(
+        slotId = slotId,
+        subjectId = subjectId,
+        episodeId = episodeId,
+        listChildren = listChildren,
+        loadMapping = loadMapping,
+    ).firstOrNull { it.cachedSource?.matches(subjectId, episodeId) == true }
+
+internal suspend fun findCloudCachedSourceMappings(
+    slotId: String,
+    subjectId: String,
+    episodeId: String,
+    listChildren: suspend (parentId: String) -> List<FileStat>,
+    loadMapping: suspend (entry: FileStat) -> PikPakFileMapping?,
+): List<PikPakFileMapping> {
     val pendingFolders = ArrayDeque<String>()
     val visitedFolders = mutableSetOf<String>()
     val matches = mutableListOf<Pair<FileStat, PikPakFileMapping>>()
@@ -853,7 +880,7 @@ internal suspend fun findCloudCachedSourceMapping(
                 entry.isFolder -> pendingFolders.addLast(entry.id)
                 entry.isFile && isAnimekoMetadataFile(entry.name) -> {
                     val mapping = loadMapping(entry) ?: continue
-                    if (mapping.cachedSource?.matches(subjectId, episodeId) == true) {
+                    if (mapping.cachedSource?.matchesSubject(subjectId) == true) {
                         matches += entry to mapping
                     }
                 }
@@ -861,15 +888,23 @@ internal suspend fun findCloudCachedSourceMapping(
         }
     }
 
-    return matches.maxByOrNull { (entry) ->
-        entry.modifiedTime.ifEmpty { entry.createdTime }
-    }?.second
+    return matches
+        .sortedWith(
+            compareByDescending<Pair<FileStat, PikPakFileMapping>> {
+                it.second.cachedSource?.episodeId == episodeId
+            }.thenByDescending { (entry) ->
+                entry.modifiedTime.ifEmpty { entry.createdTime }
+            },
+        )
+        .map { (_, mapping) -> mapping }
+        .distinctBy(PikPakFileMapping::sourceKey)
 }
 
 private fun OfflineDownloadCachedSource.matches(subjectId: String, episodeId: String): Boolean =
-    this.subjectId == subjectId &&
-            this.episodeId == episodeId &&
-            sourcePayload.isNotBlank()
+    matchesSubject(subjectId) && this.episodeId == episodeId
+
+private fun OfflineDownloadCachedSource.matchesSubject(subjectId: String): Boolean =
+    this.subjectId == subjectId && sourcePayload.isNotBlank()
 
 @Serializable
 internal data class PikPakFileMapping(

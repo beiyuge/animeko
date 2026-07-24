@@ -157,6 +157,63 @@ class PikPakCloudNamingTest {
     }
 
     @Test
+    fun `cached source candidates include same-subject season sources and prefer exact episode`() = runTest {
+        val fallback = updatedFileMapping(
+            sourceKey = "SEASON-A",
+            naming = naming.copy(
+                cachedSource = OfflineDownloadCachedSource(
+                    subjectId = "123",
+                    episodeId = "456",
+                    sourcePayload = """{"mediaId":"season-a"}""",
+                ),
+            ),
+            providerFileId = "video-fallback",
+            observedFileName = "season-a.mkv",
+            previous = null,
+        )
+        val exact = fallback.copy(
+            cachedSource = fallback.cachedSource?.copy(episodeId = "789"),
+            providerFileId = "video-exact",
+        )
+        val otherSource = fallback.copy(
+            sourceKey = "SEASON-B",
+            cachedSource = fallback.cachedSource?.copy(sourcePayload = """{"mediaId":"season-b"}"""),
+            providerFileId = "video-other",
+        )
+        val unrelatedSubject = fallback.copy(
+            sourceKey = "UNRELATED",
+            cachedSource = fallback.cachedSource?.copy(subjectId = "999"),
+            providerFileId = "video-unrelated",
+        )
+        val tree = mapOf(
+            "slot" to listOf(folder("bucket", "bucket")),
+            "bucket" to listOf(
+                folder("nested", "nested"),
+                mappingFile("fallback"),
+                mappingFile("other"),
+                mappingFile("unrelated"),
+            ),
+            "nested" to listOf(mappingFile("exact")),
+        )
+        val mappings = mapOf(
+            "fallback" to fallback,
+            "exact" to exact,
+            "other" to otherSource,
+            "unrelated" to unrelatedSubject,
+        )
+
+        val recovered = findCloudCachedSourceMappings(
+            slotId = "slot",
+            subjectId = "123",
+            episodeId = "789",
+            listChildren = { tree[it].orEmpty() },
+            loadMapping = { mappings[it.id] },
+        )
+
+        assertEquals(listOf(exact, otherSource), recovered)
+    }
+
+    @Test
     fun `cancellable best effort helper never swallows cancellation`() = runTest {
         assertFailsWith<CancellationException> {
             runCatchingCancellable<Unit> { throw CancellationException("cancel") }
