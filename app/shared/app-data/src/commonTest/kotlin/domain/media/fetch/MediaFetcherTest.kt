@@ -206,6 +206,53 @@ class MediaFetcherTest {
     }
 
     @Test
+    fun `online sources can be requested after local cache hit`() = runTest {
+        val onlineFetchCalled = AtomicInteger()
+        val cachedMedia = TestMediaList.first().copy(
+            mediaId = "pikpak-cache",
+            kind = MediaSourceKind.LocalCache,
+        )
+        val onlineMedia = TestMediaList[1]
+        val session = createFetcher(
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    kind = MediaSourceKind.LocalCache,
+                    fetch = {
+                        SinglePagePagedSource {
+                            listOf(MediaMatch(cachedMedia, MatchKind.EXACT)).asFlow()
+                        }
+                    },
+                ),
+            ),
+            createTestMediaSourceInstance(
+                TestHttpMediaSource(
+                    fetch = {
+                        onlineFetchCalled.incrementAndGet()
+                        SinglePagePagedSource {
+                            listOf(MediaMatch(onlineMedia, MatchKind.EXACT)).asFlow()
+                        }
+                    },
+                ),
+            ),
+        ).newSession(request1)
+
+        var latestResult = emptyList<Media>()
+        backgroundScope.launch {
+            session.cumulativeResults.collect { latestResult = it }
+        }
+        session.mediaSourceResults.first().awaitCompletion()
+        runCurrent()
+        assertEquals(listOf(cachedMedia), latestResult)
+        assertEquals(0, onlineFetchCalled.get())
+
+        session.requestOnlineResults()
+        runCurrent()
+
+        assertEquals(1, onlineFetchCalled.get())
+        assertEquals(listOf(cachedMedia, onlineMedia), latestResult)
+    }
+
+    @Test
     fun `online sources start when local cache probe times out`() = runTest {
         val onlineFetchCalled = AtomicInteger()
         val session = createFetcher(

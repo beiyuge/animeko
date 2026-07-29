@@ -146,6 +146,7 @@ class MediaSelectorState(
     private val preferredWebMediaSource: Flow<String?>,
     private val backgroundScope: CoroutineScope,
     private val webCaptchaCoordinator: WebCaptchaCoordinator,
+    private val onRequestOnlineResults: () -> Unit = {},
 ) {
     @Immutable
     data class Presentation(
@@ -172,6 +173,10 @@ class MediaSelectorState(
         return groupStates.getOrPut(groupId) {
             MediaGroupState(groupId)
         }
+    }
+
+    fun requestOnlineResults() {
+        onRequestOnlineResults()
     }
 
     val alliance: MediaPreferenceItemState<String> =

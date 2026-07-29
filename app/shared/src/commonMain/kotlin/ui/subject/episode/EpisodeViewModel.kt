@@ -823,6 +823,7 @@ class EpisodeViewModel(
                         getPreferredWebMediaSource(subjectId),
                         backgroundScope,
                         webCaptchaCoordinator,
+                        onRequestOnlineResults = fetchSelect.mediaFetchSession::requestOnlineResults,
                     )
                 } else {
                     // TODO: 2025/1/22 We should not use createTestMediaSelectorState

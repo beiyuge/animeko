@@ -77,6 +77,15 @@ interface MediaFetchSession {
     val cumulativeResults: Flow<List<Media>>
 
     /**
+     * Include ordinary online media sources in [cumulativeResults] even when a local-cache source
+     * has already returned a hit.
+     *
+     * Cache hits normally keep online sources idle. Call this when the user explicitly opens the
+     * manual media selector so they can switch away from a cached result.
+     */
+    fun requestOnlineResults() {}
+
+    /**
      * 所有数据源是否都已经完成, 无论是成功还是失败.
      *
      * 注意, collect [hasCompletedOrDisabled], 不会导致 [cumulativeResults] 开始 collect.

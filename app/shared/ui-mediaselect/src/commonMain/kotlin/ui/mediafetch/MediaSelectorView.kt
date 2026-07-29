@@ -127,6 +127,10 @@ fun MediaSelectorView(
     val presentation by state.presentationFlow.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(state) {
+        state.requestOnlineResults()
+    }
+
     Column(modifier) {
         val lazyListState = rememberLazyListState()
         var showExcluded by rememberSaveable { mutableStateOf(false) }

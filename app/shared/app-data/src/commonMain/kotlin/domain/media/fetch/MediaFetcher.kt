@@ -356,6 +356,7 @@ class MediaSourceMediaFetcher(
                 .take(1) // 只采用 replayCache, 让后面 flow 能完结
 
         private val overrideFetchRequest = MutableStateFlow<MediaFetchRequest?>(null)
+        private val onlineResultsRequested = MutableStateFlow(false)
 
         override val request: Flow<MediaFetchRequest> =
             combine(initialFetchRequest, overrideFetchRequest) { initial, override ->
@@ -418,11 +419,14 @@ class MediaSourceMediaFetcher(
                             localProbeCompleted || localProbeTimedOut -> LocalCacheProbe.Miss
                             else -> LocalCacheProbe.Pending
                         }
-                    }.distinctUntilChanged().flatMapLatest { probe ->
-                        when (probe) {
-                            is LocalCacheProbe.Hit -> flowOf(probe.cached)
-                            LocalCacheProbe.Miss -> combineResults(onlineResults)
-                            LocalCacheProbe.Pending -> emptyFlow()
+                    }.combine(onlineResultsRequested) { probe, requested ->
+                        probe to requested
+                    }.distinctUntilChanged().flatMapLatest { (probe, requested) ->
+                        when {
+                            requested -> combineResults(localCacheResults + onlineResults)
+                            probe is LocalCacheProbe.Hit -> flowOf(probe.cached)
+                            probe is LocalCacheProbe.Miss -> combineResults(onlineResults)
+                            else -> emptyFlow()
                         }
                     }
                 }
@@ -455,6 +459,10 @@ class MediaSourceMediaFetcher(
                     if (it == null)
                         logger.error { "cumulativeResults is completed normally, however it shouldn't" }
                 }
+        }
+
+        override fun requestOnlineResults() {
+            onlineResultsRequested.value = true
         }
 
         override val hasCompleted = if (mediaSourceResults.isEmpty()) {
