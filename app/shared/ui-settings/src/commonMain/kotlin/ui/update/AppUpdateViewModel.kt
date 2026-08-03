@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.repository.RepositoryNetworkException
+import me.him188.ani.app.data.repository.update.ForkUpdateCandidate
+import me.him188.ani.app.data.repository.update.UpdateChecker
+import me.him188.ani.app.data.repository.update.UpstreamUpdateNotice
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.foundation.HttpClientProvider
 import me.him188.ani.app.domain.foundation.LoadError
@@ -63,7 +66,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
     private val installationRunner by lazy { UpdateInstallationRunner(updateInstaller) }
 
     private val fileDownloader by lazy { DefaultFileDownloader(clientProvider.get()) }
-    private val updateChecker: UpdateChecker = UpdateChecker()
+    private val updateChecker: UpdateChecker by inject()
 
     /**
      * 最新的版本. 当 [checked] 为 `true` 时, `null` 表示没有新版本. 否则表示还没有检查过.
@@ -169,7 +172,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
                     lastNotifiedUpstreamTag = updateSettings.lastNotifiedUpstreamTag,
                 )
                 upstreamUpdateFlow.value = result.upstream
-                result.fork
+                result.fork?.toNewVersion()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -189,14 +192,12 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
         }
     }
 
-    fun markUpstreamNotified(tag: String) {
+    suspend fun markUpstreamNotified(tag: String) {
         if (upstreamUpdateFlow.value?.tag == tag) {
             upstreamUpdateFlow.value = null
         }
-        backgroundScope.launch {
-            settingsRepository.updateSettings.update {
-                if (lastNotifiedUpstreamTag == tag) this else copy(lastNotifiedUpstreamTag = tag)
-            }
+        settingsRepository.updateSettings.update {
+            if (lastNotifiedUpstreamTag == tag) this else copy(lastNotifiedUpstreamTag = tag)
         }
     }
 
@@ -329,13 +330,6 @@ class NewVersion(
 }
 
 @Immutable
-data class UpstreamUpdateNotice(
-    val tag: String,
-    val version: String,
-    val detailsUrl: String,
-)
-
-@Immutable
 class Changelog(
     val version: String,
     val publishedAt: String,
@@ -349,6 +343,14 @@ class Changelog(
         .joinToString("\n")
         .trim()
 }
+
+private fun ForkUpdateCandidate.toNewVersion(): NewVersion = NewVersion(
+    name = name,
+    changelogs = listOf(Changelog(name, publishedAt, body)),
+    downloadUrlAlternatives = downloadUrlAlternatives,
+    publishedAt = publishedAt,
+    detailsUrl = detailsUrl,
+)
 
 @TestOnly
 val TestNewVersion

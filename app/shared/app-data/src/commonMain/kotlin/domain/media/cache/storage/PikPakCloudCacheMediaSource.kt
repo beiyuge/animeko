@@ -25,6 +25,7 @@ import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.datasources.api.source.definitelyMatches
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 
@@ -33,10 +34,22 @@ import me.him188.ani.utils.logging.warn
  * file. It is presented as [MediaSourceKind.LocalCache] so a new episode session can select it
  * before starting ordinary online media-source searches.
  */
+const val PIKPAK_CACHE_MEDIA_SOURCE_ID = "pikpak-cloud-cache"
+
+/** Decides whether collecting MediaFetchSession results is allowed to start online sources. */
+fun shouldQueryOnlineMediaSources(
+    pikPakEnabled: Boolean,
+    library: OfflineDownloadLibraryState,
+    forced: Boolean,
+    subjectId: String,
+): Boolean = forced || !pikPakEnabled || library.status == OfflineDownloadLibraryState.Status.Failed ||
+        (library.status == OfflineDownloadLibraryState.Status.Ready &&
+                library.entries.none { it.subjectId == subjectId })
+
 class PikPakCloudCacheMediaSource(
     private val engine: OfflineDownloadEngine,
 ) : MediaSource {
-    override val mediaSourceId: String = "pikpak-cloud-cache"
+    override val mediaSourceId: String = PIKPAK_CACHE_MEDIA_SOURCE_ID
     override val kind: MediaSourceKind = MediaSourceKind.LocalCache
     override val location: MediaSourceLocation = MediaSourceLocation.Online
     override val info: MediaSourceInfo = MediaSourceInfo(

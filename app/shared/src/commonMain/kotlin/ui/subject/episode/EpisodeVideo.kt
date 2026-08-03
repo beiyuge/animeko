@@ -218,6 +218,7 @@ internal fun EpisodeVideoImpl(
     sideSheets: @Composable (controller: VideoSideSheetsController<EpisodeVideoSideSheetPage>) -> Unit,
     shareData: MediaShareData,
     onClickCache: () -> Unit,
+    onOpenMediaSelector: () -> Unit = {},
     cacheToPikPak: Boolean = false,
     modifier: Modifier = Modifier,
     maintainAspectRatio: Boolean = !expanded,
@@ -285,6 +286,7 @@ internal fun EpisodeVideoImpl(
                                 sheetsController = sheetsController,
                                 shareData = shareData,
                                 onClickCache = onClickCache,
+                                onOpenMediaSelector = onOpenMediaSelector,
                                 cacheToPikPak = cacheToPikPak,
                                 playerControllerState = playerControllerState,
                                 sidebarVisible = sidebarVisible,
@@ -606,6 +608,7 @@ private fun EpisodeVideoTopBarActions(
     sheetsController: VideoSideSheetsController<EpisodeVideoSideSheetPage>,
     shareData: MediaShareData,
     onClickCache: () -> Unit,
+    onOpenMediaSelector: () -> Unit,
     cacheToPikPak: Boolean,
     playerControllerState: PlayerControllerState,
     sidebarVisible: Boolean,
@@ -655,7 +658,10 @@ private fun EpisodeVideoTopBarActions(
 
     if (expanded) {
         IconButton(
-            { sheetsController.navigateTo(EpisodeVideoSideSheetPage.MEDIA_SELECTOR) },
+            {
+                onOpenMediaSelector()
+                sheetsController.navigateTo(EpisodeVideoSideSheetPage.MEDIA_SELECTOR)
+            },
             Modifier.testTag(TAG_SHOW_MEDIA_SELECTOR),
         ) {
             Icon(Icons.Rounded.DisplaySettings, contentDescription = selectMediaSourceText)
@@ -714,6 +720,7 @@ private fun EpisodeVideoTopBarActions(
                 onClick = {
                     showMoreDropdown = false
                     if (cacheToPikPak) {
+                        onClickCache()
                         sheetsController.navigateTo(EpisodeVideoSideSheetPage.MEDIA_SELECTOR)
                     } else {
                         onClickCache()

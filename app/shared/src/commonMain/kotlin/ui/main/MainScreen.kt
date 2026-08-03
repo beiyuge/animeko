@@ -390,6 +390,13 @@ private fun MainScreenNavigationLayout(
                             PikPakLibraryScreen(
                                 pikPakLibraryViewModel,
                                 onPlay = navigator::navigateEpisodeDetails,
+                                onRematchUnmatched = { subjectId, episodeId ->
+                                    navigator.navigateEpisodeDetails(
+                                        subjectId,
+                                        episodeId,
+                                        openMediaSelector = true,
+                                    )
+                                },
                                 modifier = Modifier.fillMaxSize(),
                                 windowInsets = pageWindowInsets,
                             )

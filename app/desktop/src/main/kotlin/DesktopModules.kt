@@ -226,6 +226,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
                     fallback = btFallback,
                     playbackCoordinator = get(),
                     torrentAccessPolicy = get(),
+                    subjectCollectionRepository = get(),
                 ),
             )
                 .plus(torrentResolvers)

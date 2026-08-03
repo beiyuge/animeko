@@ -34,9 +34,6 @@ import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent_confirm_mess
 import me.him188.ani.app.ui.lang.settings_pikpak_password
 import me.him188.ani.app.ui.lang.settings_pikpak_password_description
 import me.him188.ani.app.ui.lang.settings_pikpak_password_hidden
-import me.him188.ani.app.ui.lang.settings_pikpak_queue_description
-import me.him188.ani.app.ui.lang.settings_pikpak_queue_title
-import me.him188.ani.app.ui.lang.settings_pikpak_queue_unlimited
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_apply
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_dismiss
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_message
@@ -48,7 +45,6 @@ import me.him188.ani.app.ui.settings.framework.ConnectionTester
 import me.him188.ani.app.ui.settings.framework.ConnectionTesterResultIndicator
 import me.him188.ani.app.ui.settings.framework.SettingsState
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
-import me.him188.ani.app.ui.settings.framework.components.SliderItem
 import me.him188.ani.app.ui.settings.framework.components.SwitchItem
 import me.him188.ani.app.ui.settings.framework.components.TextFieldItem
 import me.him188.ani.app.ui.settings.framework.components.TextItem

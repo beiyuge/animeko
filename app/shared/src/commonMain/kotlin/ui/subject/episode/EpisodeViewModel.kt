@@ -54,6 +54,7 @@ import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.models.episode.displayName
 import me.him188.ani.app.data.models.episode.renderEpisodeEp
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
+import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.SubjectProgressInfo
 import me.him188.ani.app.data.models.subject.nameCnOrName
@@ -87,6 +88,8 @@ import me.him188.ani.app.domain.media.cache.MediaCacheManager
 import me.him188.ani.app.domain.media.resolver.PikPakPlaybackCoordinator
 import me.him188.ani.app.domain.media.fetch.MediaSourceManager
 import me.him188.ani.app.domain.media.fetch.MediaSourceResultsFilterer
+import me.him188.ani.app.domain.media.cache.storage.PIKPAK_CACHE_MEDIA_SOURCE_ID
+import me.him188.ani.app.domain.media.cache.storage.shouldQueryOnlineMediaSources
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.mediasource.GetPreferredWebMediaSourceUseCase
 import me.him188.ani.app.domain.mediasource.instance.GetMediaSourceInstancesUseCase
@@ -104,6 +107,7 @@ import me.him188.ani.app.domain.player.extension.SwitchMediaOnPlayerErrorExtensi
 import me.him188.ani.app.domain.player.extension.SwitchNextEpisodeExtension
 import me.him188.ani.app.domain.player.extension.WatchTogetherPlayerExtension
 import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.torrent.offline.OfflineEpisodeAvailability
 import me.him188.ani.torrent.offline.classifyOfflineEpisodeAvailability
 import me.him188.ani.app.domain.settings.GetDanmakuRegexFilterListFlowUseCase
@@ -168,6 +172,8 @@ import me.him188.ani.danmaku.ui.DanmakuConfig
 import me.him188.ani.danmaku.ui.DanmakuHostState
 import me.him188.ani.danmaku.ui.DanmakuPresentation
 import me.him188.ani.danmaku.ui.DanmakuTrackProperties
+import me.him188.ani.datasources.api.EpisodeType
+import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.source.MediaFetchRequest
 import me.him188.ani.datasources.api.source.MediaSourceKind
@@ -386,9 +392,17 @@ class EpisodeViewModel(
         val target = bundle.episodeInfo.sort.number?.toInt() ?: return@combine null
         val subjectEntries = library.entries.filter { it.subjectId == subjectId.toString() }
         val cached = subjectEntries.mapNotNull { it.episodeNumber.toFloatOrNull()?.toInt() }.toSet()
-        val remoteMissing = subjectEntries.filter { it.entryId in library.remoteMissingEntryIds }
-            .mapNotNull { it.episodeNumber.toFloatOrNull()?.toInt() }
-            .toSet()
+        val remoteMissing = subjectEntries
+            .groupBy { it.episodeNumber.toFloatOrNull()?.toInt() }
+            .filterKeys { it != null }
+            .filterValues { resources ->
+                resources.all { entry ->
+                    entry.entryId in library.remoteMissingEntryIds || runCatching {
+                        DataStoreJson.decodeFromString(DefaultMedia.serializer(), entry.sourcePayload)
+                    }.isFailure
+                }
+            }
+            .keys.filterNotNull().toSet()
         classifyOfflineEpisodeAvailability(
             targetEpisode = target,
             latestAiredEpisode = bundle.subjectCollectionInfo.airingInfo.latestEp?.number?.toInt() ?: 0,
@@ -825,6 +839,10 @@ class EpisodeViewModel(
     )
 
     private val matchingDanmakuProviderId = MutableStateFlow<DanmakuProviderId?>(null)
+    private val forceOnlineMediaQuery = MutableStateFlow(false)
+    private val _pikPakSelectorRequest = MutableStateFlow(0L)
+    val pikPakSelectorRequest = _pikPakSelectorRequest
+    private val pikPakBulkUpdateActive = MutableStateFlow(false)
 
     val pageState = fetchPlayState.episodeSessionFlow.transformLatest { episodeSession ->
         logger.info { "Switching to new episodeSession ${episodeSession.episodeId}" }
@@ -838,9 +856,20 @@ class EpisodeViewModel(
     val danmakuHostState = DanmakuHostState(danmakuConfigState, DanmakuTrackProperties.Default)
 
     private fun CoroutineScope.createPageStateFlow(episodeSession: EpisodeSession): Flow<EpisodePageState> {
-        // 保证数据源会一直查询, 否则会显示许多 CANCELLED 日志
-        episodeSession.fetchSelectFlow.flatMapLatest {
-            it?.mediaFetchSession?.cumulativeResults ?: flowOfEmptyList()
+        // PikPak library sessions stay fully offline until the user explicitly asks to select or
+        // rematch a resource. This gate must wrap cumulativeResults itself: merely suppressing
+        // auto-select would still start every online MediaSource.
+        combine(
+            settingsRepository.pikpakConfig.flow,
+            offlineDownloadLibrary.libraryState,
+            forceOnlineMediaQuery,
+        ) { config, library, forced ->
+            shouldQueryOnlineMediaSources(config.enabled, library, forced, subjectId.toString())
+        }.distinctUntilChanged().flatMapLatest { shouldQueryOnline ->
+            if (!shouldQueryOnline) return@flatMapLatest flowOfEmptyList()
+            episodeSession.fetchSelectFlow.flatMapLatest {
+                it?.mediaFetchSession?.cumulativeResults ?: flowOfEmptyList()
+            }
         }.launchIn(this)
 
         val filteredSourceResults = MediaSourceResultsFilterer(
@@ -852,8 +881,11 @@ class EpisodeViewModel(
         ).filteredSourceResults
             .shareIn(this, started = SharingStarted.Lazily, replay = 1)
 
+        val selectableSourceResults = combine(filteredSourceResults, forceOnlineMediaQuery) { results, forced ->
+            if (forced) results.filterNot { it.mediaSourceId == PIKPAK_CACHE_MEDIA_SOURCE_ID } else results
+        }
         val mediaSourceResultsFlow = MediaSourceResultListPresenter(
-            filteredSourceResults,
+            selectableSourceResults,
             getPreferredWebMediaSource(subjectId),
         ).presentationFlow
             .shareIn(this, SharingStarted.Lazily, replay = 1)
@@ -1021,11 +1053,66 @@ class EpisodeViewModel(
         }
     }
 
-    fun refreshPikPakAvailability() {
+    fun requestPikPakResourceSelection(
+        refreshAiring: Boolean = false,
+        rematchCached: Boolean = false,
+    ) {
         launchInBackground {
-            subjectCollectionRepository.forceRefreshSubjectCollection(subjectId)
-            offlineDownloadLibrary.sync()
+            if (!rematchCached && hasPlayablePikPakBinding(fetchPlayState.getCurrentEpisodeId())) {
+                // Cache actions are idempotent. AutoSelectExtension will select this binding and
+                // direct playback will refresh its signed URL without another source query/task.
+                return@launchInBackground
+            }
+            if (refreshAiring) {
+                pikPakBulkUpdateActive.value = true
+                subjectCollectionRepository.forceRefreshSubjectCollection(subjectId)
+                offlineDownloadLibrary.sync()
+                firstAiredMissingEpisodeId()?.let { missingEpisodeId ->
+                    if (missingEpisodeId != fetchPlayState.getCurrentEpisodeId()) switchEpisode(missingEpisodeId)
+                }
+            }
+            openPikPakSelectorForCurrentEpisode()
         }
+    }
+
+    private fun hasPlayablePikPakBinding(episodeId: Int): Boolean {
+        val library = offlineDownloadLibrary.libraryState.value
+        return library.entries.any { entry ->
+            entry.subjectId == subjectId.toString() &&
+                    entry.episodeId == episodeId.toString() &&
+                    entry.entryId !in library.remoteMissingEntryIds &&
+                    runCatching {
+                        DataStoreJson.decodeFromString(DefaultMedia.serializer(), entry.sourcePayload)
+                    }.isSuccess
+        }
+    }
+
+    private suspend fun openPikPakSelectorForCurrentEpisode() {
+            forceOnlineMediaQuery.value = true
+            fetchPlayState.episodeSessionFlow.flatMapLatest { it.fetchSelectFlow }
+                .map { it?.mediaFetchSession }
+                .filterNotNull()
+                .firstOrNull()
+                ?.restartAll()
+            _pikPakSelectorRequest.value += 1
+    }
+
+    fun finishPikPakResourceSelection() {
+        forceOnlineMediaQuery.value = false
+    }
+
+    private suspend fun firstAiredMissingEpisodeId(): Int? {
+        val collection = subjectCollectionRepository.subjectCollectionFlow(subjectId).first()
+        val latestAired = collection.airingInfo.latestEp?.number ?: return null
+        val cachedEpisodeIds = offlineDownloadLibrary.libraryState.value.entries
+            .filter { it.subjectId == subjectId.toString() }
+            .mapTo(mutableSetOf()) { it.episodeId }
+        return collection.episodes.asSequence()
+            .map { it.episodeInfo }
+            .filter { it.type == EpisodeType.MainStory }
+            .filter { it.sort.number?.let { number -> number <= latestAired } == true }
+            .firstOrNull { it.episodeId.toString() !in cachedEpisodeIds }
+            ?.episodeId
     }
 
     /**
@@ -1096,6 +1183,23 @@ class EpisodeViewModel(
     }
 
     init {
+        launchInBackground {
+            combine(pikPakBulkUpdateActive, offlineDownloadLibrary.libraryState) { active, library ->
+                active to library
+            }.collectLatest { (active, library) ->
+                if (!active || library.status != OfflineDownloadLibraryState.Status.Ready) return@collectLatest
+                val nextMissing = firstAiredMissingEpisodeId()
+                if (nextMissing == null) {
+                    pikPakBulkUpdateActive.value = false
+                    forceOnlineMediaQuery.value = false
+                    return@collectLatest
+                }
+                if (nextMissing != fetchPlayState.getCurrentEpisodeId()) {
+                    switchEpisode(nextMissing)
+                    openPikPakSelectorForCurrentEpisode()
+                }
+            }
+        }
         launchInBackground {
             if (settingsRepository.pikpakConfig.flow.first().enabled) {
                 subjectCollectionRepository.forceRefreshSubjectCollection(subjectId)

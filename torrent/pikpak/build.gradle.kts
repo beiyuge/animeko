@@ -37,6 +37,7 @@ kotlin {
         namespace = "me.him188.ani.torrent.pikpak"
     }
     sourceSets.commonMain.dependencies {
+        api(projects.torrent.torrentApi)
         api(libs.kotlinx.coroutines.core)
         api(libs.kotlinx.datetime)
         api(projects.utils.platform)

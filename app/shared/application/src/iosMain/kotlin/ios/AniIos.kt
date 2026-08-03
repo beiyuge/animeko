@@ -363,7 +363,13 @@ fun getIosModules(
         val torrentResolvers = get<TorrentManager>().engines.map { TorrentMediaResolver(it, get()) }
         val btFallback = MediaResolver.from(torrentResolvers)
         MediaResolver.from(
-            listOf<MediaResolver>(OfflineDownloadMediaResolver(get(), fallback = btFallback))
+            listOf<MediaResolver>(
+                OfflineDownloadMediaResolver(
+                    get(),
+                    fallback = btFallback,
+                    subjectCollectionRepository = get(),
+                ),
+            )
                 .plus(torrentResolvers)
                 .plus(LocalFileUriMediaResolver())
                 .plus(HttpStreamingMediaResolver())

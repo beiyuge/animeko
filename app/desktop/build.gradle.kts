@@ -27,6 +27,7 @@ dependencies {
     implementation(projects.app.shared)
     implementation(projects.app.shared.uiFoundation)
     implementation(projects.app.shared.application)
+    implementation(projects.torrent.pikpak)
     implementation(libs.compose.components.resources)
     implementation(libs.compose.native.tray)
     implementation(libs.log4j.core)

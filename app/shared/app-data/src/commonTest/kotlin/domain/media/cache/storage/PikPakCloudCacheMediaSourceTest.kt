@@ -20,13 +20,48 @@ import me.him188.ani.datasources.api.source.MediaFetchRequest
 import me.him188.ani.datasources.api.topic.EpisodeRange
 import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryEntry
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryManifest
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.ResolvedMedia
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PikPakCloudCacheMediaSourceTest {
+    @Test
+    fun `PikPak library prevents online source collection until explicitly forced`() {
+        val state = OfflineDownloadLibraryState(
+            status = OfflineDownloadLibraryState.Status.Ready,
+            manifest = OfflineDownloadLibraryManifest(
+                entries = listOf(
+                    OfflineDownloadLibraryEntry(
+                        entryId = "123:456:file",
+                        subjectId = "123",
+                        subjectName = "Test",
+                        episodeId = "456",
+                        episodeNumber = "1",
+                        episodeTitle = "",
+                        sourceKey = "source",
+                        sourcePayload = "{}",
+                        resourceRootId = "file",
+                        providerFileId = "file",
+                        providerFileName = "1.mkv",
+                        createdAt = 1,
+                        updatedAt = 1,
+                    ),
+                ),
+            ),
+        )
+
+        assertFalse(shouldQueryOnlineMediaSources(true, state, forced = false, subjectId = "123"))
+        assertTrue(shouldQueryOnlineMediaSources(true, state, forced = true, subjectId = "123"))
+        assertTrue(shouldQueryOnlineMediaSources(true, state, forced = false, subjectId = "other"))
+    }
+
     @Test
     fun `recreates cached media for the same episode`() = runTest {
         val origin = TestMediaList.first()

@@ -3,7 +3,7 @@
  * Use of this source code is governed by the GNU AGPLv3 license.
  */
 
-package me.him188.ani.app.ui.update
+package me.him188.ani.app.data.repository.update
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -29,8 +29,22 @@ import me.him188.ani.utils.platform.currentPlatform
 import kotlin.time.Instant
 
 data class UpdateCheckResult(
-    val fork: NewVersion?,
+    val fork: ForkUpdateCandidate?,
     val upstream: UpstreamUpdateNotice?,
+)
+
+data class ForkUpdateCandidate(
+    val name: String,
+    val body: String,
+    val downloadUrlAlternatives: List<String>,
+    val publishedAt: String,
+    val detailsUrl: String,
+)
+
+data class UpstreamUpdateNotice(
+    val tag: String,
+    val version: String,
+    val detailsUrl: String,
 )
 
 /** Checks installable fork releases and informational upstream releases on GitHub. */
@@ -78,7 +92,7 @@ class UpdateChecker(
     suspend fun checkLatestVersion(
         releaseClass: ReleaseClass,
         currentVersion: String = currentAniBuildConfig.versionName,
-    ): NewVersion? = checkUpdates(releaseClass, currentVersion).fork
+    ): ForkUpdateCandidate? = checkUpdates(releaseClass, currentVersion).fork
 
     private suspend fun HttpClient.getReleases(repository: String): List<GitHubRelease> {
         val body = get("https://api.github.com/repos/$repository/releases?per_page=40") {
@@ -101,7 +115,7 @@ internal fun selectForkUpdate(
     currentVersion: String,
     releaseClass: ReleaseClass,
     platform: Platform,
-): NewVersion? {
+): ForkUpdateCandidate? {
     val current = AnimekoReleaseVersion.parse(currentVersion) ?: return null
     val latest = releases.asSequence()
         .filterNot { it.draft }
@@ -115,16 +129,10 @@ internal fun selectForkUpdate(
         ?: return null
     val (release, version) = latest
     val urls = selectDownloadAssets(release.assets, platform)
-        .ifEmpty { listOf(release.htmlUrl) }
-    return NewVersion(
+    if (urls.isEmpty()) return null
+    return ForkUpdateCandidate(
         name = release.tagName.removePrefix("v"),
-        changelogs = listOf(
-            Changelog(
-                version = release.tagName.removePrefix("v"),
-                publishedAt = formatGitHubTime(release.publishedAt),
-                changes = release.body,
-            ),
-        ),
+        body = release.body,
         downloadUrlAlternatives = urls,
         publishedAt = formatGitHubTime(release.publishedAt),
         detailsUrl = release.htmlUrl,
@@ -173,7 +181,7 @@ internal fun selectDownloadAssets(assets: List<GitHubAsset>, platform: Platform)
             }
 
             is Platform.Windows -> when {
-                !value.contains("windows") || !value.contains("x86_64") -> -1
+                !value.contains("windows") || !value.matchesArch(platform.arch) -> -1
                 value.endsWith(".msi") -> 100
                 value.endsWith(".exe") -> 90
                 value.endsWith(".zip") -> 70
@@ -195,7 +203,7 @@ internal fun selectDownloadAssets(assets: List<GitHubAsset>, platform: Platform)
             }
 
             is Platform.Linux -> when {
-                !value.contains("linux") || !value.contains("x86_64") -> -1
+                !value.contains("linux") || !value.matchesArch(platform.arch) -> -1
                 value.endsWith(".appimage") -> 100
                 value.endsWith(".deb") -> 80
                 value.endsWith(".zip") -> 60
@@ -208,6 +216,12 @@ internal fun selectDownloadAssets(assets: List<GitHubAsset>, platform: Platform)
     return assets.mapNotNull { asset ->
         score(asset.name).takeIf { it >= 0 }?.let { it to asset.browserDownloadUrl }
     }.sortedByDescending { it.first }.map { it.second }
+}
+
+private fun String.matchesArch(arch: Arch): Boolean = when (arch) {
+    Arch.X86_64 -> contains("x86_64") || contains("x64")
+    Arch.AARCH64, Arch.ARMV8A -> contains("aarch64") || contains("arm64") || contains("arm64-v8a")
+    Arch.ARMV7A -> contains("armeabi-v7a") || contains("armv7")
 }
 
 @Serializable

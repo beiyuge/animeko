@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,10 +47,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.ui.foundation.AbstractViewModel
 import me.him188.ani.app.ui.foundation.layout.AniWindowInsets
+import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.torrent.offline.OfflineDownloadLibraryEntry
 import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
@@ -66,7 +71,10 @@ class PikPakLibraryViewModel : AbstractViewModel(), KoinComponent {
         .stateInBackground(false)
 
     init {
-        refresh()
+        backgroundScope.launch {
+            enabled.filter { it }.first()
+            library.sync()
+        }
     }
 
     fun refresh() {
@@ -79,6 +87,10 @@ class PikPakLibraryViewModel : AbstractViewModel(), KoinComponent {
 
     fun deleteUnmatched(providerFileId: String) {
         backgroundScope.launch { library.deleteUnmatched(providerFileId) }
+    }
+
+    fun prepareUnmatchedRematch(providerFileId: String, subjectId: Int, episodeId: Int) {
+        library.prepareUnmatchedRematch(providerFileId, subjectId.toString(), episodeId.toString())
     }
 }
 
@@ -95,6 +107,7 @@ private data class PikPakEpisodeRow(
 fun PikPakLibraryScreen(
     vm: PikPakLibraryViewModel,
     onPlay: (subjectId: Int, episodeId: Int) -> Unit,
+    onRematchUnmatched: (subjectId: Int, episodeId: Int) -> Unit,
     modifier: Modifier = Modifier,
     windowInsets: WindowInsets = AniWindowInsets.forPageContent(),
 ) {
@@ -105,6 +118,10 @@ fun PikPakLibraryScreen(
         onPlay = onPlay,
         onDeleteEpisode = vm::deleteEpisode,
         onDeleteUnmatched = vm::deleteUnmatched,
+        onRematchUnmatched = { providerFileId, subjectId, episodeId ->
+            vm.prepareUnmatchedRematch(providerFileId, subjectId, episodeId)
+            onRematchUnmatched(subjectId, episodeId)
+        },
         modifier = modifier,
         windowInsets = windowInsets,
     )
@@ -118,6 +135,7 @@ fun PikPakLibraryScreen(
     onPlay: (subjectId: Int, episodeId: Int) -> Unit,
     onDeleteEpisode: (subjectId: String, episodeId: String) -> Unit,
     onDeleteUnmatched: (providerFileId: String) -> Unit,
+    onRematchUnmatched: (providerFileId: String, subjectId: Int, episodeId: Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
     windowInsets: WindowInsets = AniWindowInsets.forPageContent(),
 ) {
@@ -136,9 +154,10 @@ fun PikPakLibraryScreen(
     }
     var deleteEpisode by remember { mutableStateOf<PikPakEpisodeRow?>(null) }
     var deleteUnmatched by remember { mutableStateOf<OfflineDownloadUnmatchedResource?>(null) }
+    var rematchUnmatched by remember { mutableStateOf<OfflineDownloadUnmatchedResource?>(null) }
 
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.testTag("PikPakLibraryScreen"),
         contentWindowInsets = windowInsets,
         topBar = {
             TopAppBar(
@@ -177,10 +196,10 @@ fun PikPakLibraryScreen(
                     )
                 }
             }
-            rows.groupBy(PikPakEpisodeRow::subjectName).forEach { (subjectName, episodes) ->
+            rows.groupBy(PikPakEpisodeRow::subjectId).forEach { (_, episodes) ->
                 item {
                     Text(
-                        subjectName,
+                        episodes.first().subjectName,
                         Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         style = MaterialTheme.typography.titleMedium,
                     )
@@ -208,9 +227,13 @@ fun PikPakLibraryScreen(
                             )
                         },
                         supportingContent = {
-                            val missing = episode.resources.all { it.entryId in state.remoteMissingEntryIds }
+                            val missing = episode.resources.all { entry ->
+                                entry.entryId in state.remoteMissingEntryIds || runCatching {
+                                    DataStoreJson.decodeFromString(DefaultMedia.serializer(), entry.sourcePayload)
+                                }.isFailure
+                            }
                             Text(
-                                if (missing) "云端资源已失效 · 长按可删除"
+                                if (missing) "资源已失效 · 长按可删除"
                                 else "可播放 · ${episode.resources.size} 个资源",
                                 color = if (missing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -223,14 +246,14 @@ fun PikPakLibraryScreen(
                 item {
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text("未匹配资源", style = MaterialTheme.typography.titleMedium)
-                        Text("这些历史文件没有动漫或剧集记录，长按可删除", style = MaterialTheme.typography.bodySmall)
+                        Text("点击可重新匹配，长按可删除", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 items(state.unmatchedResources, key = OfflineDownloadUnmatchedResource::providerFileId) { resource ->
                     ListItem(
                         modifier = Modifier.testTag("PikPakUnmatched:${resource.providerFileId}")
                             .combinedClickable(
-                            onClick = {},
+                            onClick = { rematchUnmatched = resource },
                             onLongClick = { deleteUnmatched = resource },
                         ),
                         leadingContent = { Icon(Icons.Rounded.Cloud, null) },
@@ -264,6 +287,56 @@ fun PikPakLibraryScreen(
             },
         )
     }
+    rematchUnmatched?.let { resource ->
+        RematchUnmatchedDialog(
+            resourceName = resource.providerFileName,
+            onDismiss = { rematchUnmatched = null },
+            onConfirm = { subjectId, episodeId ->
+                onRematchUnmatched(resource.providerFileId, subjectId, episodeId)
+                rematchUnmatched = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun RematchUnmatchedDialog(
+    resourceName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (subjectId: Int, episodeId: Int) -> Unit,
+) {
+    var subjectId by remember { mutableStateOf("") }
+    var episodeId by remember { mutableStateOf("") }
+    val parsedSubjectId = subjectId.toIntOrNull()
+    val parsedEpisodeId = episodeId.toIntOrNull()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("重新匹配资源") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(resourceName, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                OutlinedTextField(
+                    subjectId,
+                    { subjectId = it.filter(Char::isDigit) },
+                    modifier = Modifier.testTag("PikPakRematchSubjectId"),
+                    label = { Text("动漫 ID") },
+                )
+                OutlinedTextField(
+                    episodeId,
+                    { episodeId = it.filter(Char::isDigit) },
+                    modifier = Modifier.testTag("PikPakRematchEpisodeId"),
+                    label = { Text("剧集 ID") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(parsedSubjectId!!, parsedEpisodeId!!) },
+                enabled = parsedSubjectId != null && parsedEpisodeId != null,
+            ) { Text("选择资源") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

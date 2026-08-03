@@ -128,6 +128,7 @@ android {
 dependencies {
     implementation(projects.app.shared)
     implementation(projects.app.shared.application)
+    implementation(projects.torrent.pikpak)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

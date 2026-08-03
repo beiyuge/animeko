@@ -94,12 +94,13 @@ interface AniNavigator {
         episodeId: Int,
         fullscreen: Boolean = false,
         force: Boolean = false,
+        openMediaSelector: Boolean = false,
     ) {
         if (!force && !EpisodeNavigationGuardRegistry.checkOrNotifyDenied(subjectId, episodeId)) {
             return
         }
         currentNavigator.popBackStack(NavRoutes.EpisodeDetail(subjectId, episodeId), inclusive = true)
-        currentNavigator.navigate(NavRoutes.EpisodeDetail(subjectId, episodeId))
+        currentNavigator.navigate(NavRoutes.EpisodeDetail(subjectId, episodeId, openMediaSelector))
         Analytics.recordEvent(
             EpisodeEnter,
             mapOf("subject_id" to subjectId, "episode_id" to episodeId),

@@ -39,6 +39,7 @@ kotlin {
         implementation(libs.compose.components.resources)
         implementation(projects.app.shared.reorderable)
         implementation(projects.app.shared.placeholder)
+        implementation(projects.torrent.pikpak)
         implementation(libs.filekit.dialogs)
         implementation(libs.filekit.dialogs.compose)
         implementation(libs.atomicfu)

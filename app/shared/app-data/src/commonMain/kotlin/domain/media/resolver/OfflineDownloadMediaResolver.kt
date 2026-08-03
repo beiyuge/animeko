@@ -13,19 +13,26 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
 import me.him188.ani.app.data.persistent.DataStoreJson
+import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
+import me.him188.ani.app.domain.episode.EpisodeCompletionContext.isKnownCompleted
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
+import me.him188.ani.app.domain.media.cache.storage.PIKPAK_CACHE_MEDIA_SOURCE_ID
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.DefaultMedia
+import me.him188.ani.datasources.api.EpisodeType
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.unwrapCached
 import me.him188.ani.datasources.api.topic.ResourceLocation
+import me.him188.ani.datasources.api.topic.contains
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadEpisodeBinding
 import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.ResolvedMedia
@@ -56,6 +63,7 @@ class OfflineDownloadMediaResolver(
     private val fallback: MediaResolver? = null,
     private val playbackCoordinator: PikPakPlaybackCoordinator? = null,
     private val torrentAccessPolicy: LocalTorrentAccessPolicy? = null,
+    private val subjectCollectionRepository: SubjectCollectionRepository? = null,
 ) : MediaResolver {
     private val logger = logger<OfflineDownloadMediaResolver>()
 
@@ -82,27 +90,37 @@ class OfflineDownloadMediaResolver(
         }
         val subjectId = episode.subjectId?.toString()
         val episodeId = episode.episodeId?.toString()
+        var mediaToResolve = media
         if (
             (media as? CachedMedia)?.mediaSourceId == PIKPAK_CACHE_MEDIA_SOURCE_ID &&
             subjectId != null && episodeId != null
         ) {
             playbackCoordinator?.begin(media.mediaId)
-            val cached = (engine as? OfflineDownloadLibrary)
-                ?.resolveCachedEpisode(subjectId, episodeId)
+            val library = engine as? OfflineDownloadLibrary
+            val hadExactBinding = library?.libraryState?.value?.entries?.any {
+                it.subjectId == subjectId && it.episodeId == episodeId
+            } == true
+            val cached = library?.resolveCachedEpisode(subjectId, episodeId)
             if (cached != null) {
                 playbackCoordinator?.playing(media.mediaId, cloudCacheHit = true)
                 return cached.toStreamingProvider(media)
             }
-            logger.warn {
-                "PikPak library entry for subject=$subjectId episode=$episodeId is no longer playable; " +
-                        "waiting for explicit rematch"
+            if (hadExactBinding) {
+                logger.warn {
+                    "PikPak library entry for subject=$subjectId episode=$episodeId is no longer playable; " +
+                            "waiting for explicit rematch"
+                }
+                throw MediaResolutionException(
+                    ResolutionFailures.ENGINE_ERROR,
+                    IllegalStateException("PikPak 云端资源已失效，请重新匹配"),
+                )
             }
-            throw MediaResolutionException(
-                ResolutionFailures.ENGINE_ERROR,
-                IllegalStateException("PikPak 云端资源已失效，请重新匹配"),
-            )
+            // Legacy season mappings may only contain the episode that created the pack. Reuse the
+            // original payload once so the engine can select this child and register every covered
+            // episode without submitting another offline task.
+            mediaToResolve = media.unwrapCached()
         }
-        val uri = when (val d = media.download) {
+        val uri = when (val d = mediaToResolve.download) {
             is ResourceLocation.MagnetLink -> d.uri
             is ResourceLocation.HttpTorrentFile -> d.uri
             else -> throw UnsupportedMediaException(media)
@@ -125,9 +143,70 @@ class OfflineDownloadMediaResolver(
                 allowSingleFileFallback = false,
             )
         }
+        val coveredEpisodeInfos = if (episode.subjectId == null || mediaToResolve.episodeRange == null) {
+            emptyList()
+        } else {
+            subjectCollectionRepository?.subjectCollectionFlow(episode.subjectId)?.first()?.let { subject ->
+                val latestAired = subject.airingInfo.latestEp?.number
+                subject.episodes.map { it.episodeInfo }.filter { candidate ->
+                    candidate.type == EpisodeType.MainStory &&
+                            (
+                                    candidate.isKnownCompleted(subject.recurrence) ||
+                                            candidate.sort.number?.let { number ->
+                                                latestAired != null && number <= latestAired
+                                            } == true
+                                    ) &&
+                            (candidate.ep?.let { it in mediaToResolve.episodeRange!! } == true ||
+                                    candidate.sort in mediaToResolve.episodeRange!!)
+                }
+            }.orEmpty()
+        }
+        val coveredEpisodes = coveredEpisodeInfos.map { candidate ->
+            OfflineDownloadEpisodeBinding(
+                subjectId = episode.subjectId.toString(),
+                subjectName = mediaToResolve.properties.subjectName
+                    ?: mediaToResolve.originalTitle.takeIf(String::isNotBlank).orEmpty(),
+                episodeId = candidate.episodeId.toString(),
+                episodeNumber = (candidate.ep ?: candidate.sort).toString(),
+                episodeTitle = candidate.nameCn.ifBlank { candidate.name },
+            )
+        }
+        val pickCoveredVideoFiles: (List<String>) -> Map<String, String> = { names ->
+            coveredEpisodeInfos.mapNotNull { candidate ->
+                TorrentMediaResolver.selectVideoFileEntry(
+                    entries = names,
+                    getPath = { this },
+                    episodeTitles = listOf(candidate.nameCn, candidate.name).filter(String::isNotBlank),
+                    episodeSort = candidate.sort,
+                    episodeEp = candidate.ep,
+                    allowSingleFileFallback = coveredEpisodeInfos.size == 1,
+                )?.let { candidate.episodeId.toString() to it }
+            }.toMap()
+        }
+        val offlineNaming = OfflineDownloadNaming(
+            subjectName = mediaToResolve.properties.subjectName
+                ?: mediaToResolve.originalTitle.takeIf(String::isNotBlank),
+            episodeTitle = episode.title.takeIf(String::isNotBlank),
+            episodeNumber = (episode.ep ?: episode.sort).toString(),
+            cachedSource = episode.takeIf {
+                it.subjectId != null && it.episodeId != null
+            }?.let {
+                OfflineDownloadCachedSource(
+                    subjectId = it.subjectId.toString(),
+                    episodeId = it.episodeId.toString(),
+                    sourcePayload = DataStoreJson.encodeToString(
+                        DefaultMedia.serializer(),
+                        mediaToResolve.unwrapCached(),
+                    ),
+                    sourceUri = uri,
+                )
+            },
+            coveredEpisodes = coveredEpisodes,
+            pickCoveredVideoFiles = pickCoveredVideoFiles.takeIf { coveredEpisodes.isNotEmpty() },
+        )
 
         logger.info {
-            "[${engine.id}] resolving media '${media.mediaId}' via ${engine.displayName}"
+            "[${engine.id}] resolving media '${mediaToResolve.mediaId}' via ${engine.displayName}"
         }
         playbackCoordinator?.begin(media.mediaId)
         // A caller cancel must propagate, but [TimeoutCancellationException]
@@ -144,28 +223,17 @@ class OfflineDownloadMediaResolver(
                     }
                 }
                 try {
-                    engine.resolve(
-                        uri = uri,
-                        pickVideoFile = pickVideoFile,
-                        naming = OfflineDownloadNaming(
-                            subjectName = media.properties.subjectName
-                                ?: media.originalTitle.takeIf(String::isNotBlank),
-                            episodeTitle = episode.title.takeIf(String::isNotBlank),
-                            episodeNumber = (episode.ep ?: episode.sort).toString(),
-                            cachedSource = episode.takeIf {
-                                it.subjectId != null && it.episodeId != null
-                            }?.let {
-                                OfflineDownloadCachedSource(
-                                    subjectId = it.subjectId.toString(),
-                                    episodeId = it.episodeId.toString(),
-                                    sourcePayload = DataStoreJson.encodeToString(
-                                        DefaultMedia.serializer(),
-                                        media.unwrapCached(),
-                                    ),
-                                )
-                            },
-                        ),
-                    )
+                    val prepared = if (subjectId != null && episodeId != null) {
+                        (engine as? OfflineDownloadLibrary)?.resolvePreparedUnmatched(
+                            subjectId,
+                            episodeId,
+                            pickVideoFile,
+                            offlineNaming,
+                        )
+                    } else {
+                        null
+                    }
+                    prepared ?: engine.resolve(uri, pickVideoFile, offlineNaming)
                 } finally {
                     progressJob.cancel()
                 }
@@ -222,7 +290,4 @@ class OfflineDownloadMediaResolver(
         throw MediaResolutionException(reason, cause)
     }
 
-    private companion object {
-        const val PIKPAK_CACHE_MEDIA_SOURCE_ID = "pikpak-cloud-cache"
-    }
 }

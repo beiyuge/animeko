@@ -456,6 +456,9 @@ private fun AniAppContentImpl(
                         context,
                     )
                 }
+                LaunchedEffect(route.openMediaSelector) {
+                    if (route.openMediaSelector) vm.requestPikPakResourceSelection()
+                }
                 EpisodeScreen(vm, Modifier.fillMaxSize(), windowInsets)
             }
             composable<NavRoutes.Settings>(

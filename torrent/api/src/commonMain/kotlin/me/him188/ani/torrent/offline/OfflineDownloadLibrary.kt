@@ -22,6 +22,15 @@ interface OfflineDownloadLibrary {
     suspend fun deleteEpisode(subjectId: String, episodeId: String)
 
     suspend fun deleteUnmatched(providerFileId: String)
+
+    fun prepareUnmatchedRematch(providerFileId: String, subjectId: String, episodeId: String) = Unit
+
+    suspend fun resolvePreparedUnmatched(
+        subjectId: String,
+        episodeId: String,
+        pickVideoFile: (candidateFilenames: List<String>) -> String?,
+        naming: OfflineDownloadNaming,
+    ): ResolvedMedia? = null
 }
 
 enum class OfflineEpisodeAvailability {
@@ -103,7 +112,7 @@ data class OfflineDownloadLibraryState(
     }
 }
 
-internal fun mergeOfflineDownloadLibraryManifests(
+fun mergeOfflineDownloadLibraryManifests(
     local: OfflineDownloadLibraryManifest,
     remote: OfflineDownloadLibraryManifest,
     now: Long,
@@ -122,3 +131,31 @@ internal fun mergeOfflineDownloadLibraryManifests(
         entries = mergedEntries,
     )
 }
+
+/**
+ * Uploads a desired manifest and re-reads the cloud copy until entries observed from concurrent
+ * devices have been merged back. The callbacks keep provider SDKs out of the public library API
+ * and make the conflict protocol independently testable.
+ */
+suspend fun convergeOfflineDownloadLibraryManifest(
+    desired: OfflineDownloadLibraryManifest,
+    loadRemote: suspend () -> OfflineDownloadLibraryManifest,
+    upload: suspend (OfflineDownloadLibraryManifest) -> Unit,
+    now: () -> Long,
+    maxRechecks: Int = 3,
+): OfflineDownloadLibraryManifest {
+    require(maxRechecks > 0) { "maxRechecks must be positive" }
+    var candidate = desired
+    repeat(maxRechecks) {
+        upload(candidate)
+        val remote = loadRemote()
+        val merged = mergeOfflineDownloadLibraryManifests(candidate, remote, now())
+        if (merged.hasSameEntriesAs(remote)) return merged
+        candidate = merged
+    }
+    return mergeOfflineDownloadLibraryManifests(candidate, loadRemote(), now())
+}
+
+private fun OfflineDownloadLibraryManifest.hasSameEntriesAs(other: OfflineDownloadLibraryManifest): Boolean =
+    entries.associateBy(OfflineDownloadLibraryEntry::entryId) ==
+            other.entries.associateBy(OfflineDownloadLibraryEntry::entryId)

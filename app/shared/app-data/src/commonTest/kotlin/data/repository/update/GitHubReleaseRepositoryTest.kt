@@ -3,7 +3,7 @@
  * Use of this source code is governed by the GNU AGPLv3 license.
  */
 
-package me.him188.ani.app.ui.update
+package me.him188.ani.app.data.repository.update
 
 import me.him188.ani.app.data.network.protocol.ReleaseClass
 import me.him188.ani.utils.platform.Arch
@@ -43,6 +43,45 @@ class UpdateCheckerTest {
         assertNotNull(update)
         assertEquals("6.0.0-beta02.xuanyu.2", update.name)
         assertTrue(update.downloadUrlAlternatives.first().contains("arm64-v8a"))
+    }
+
+    @Test
+    fun `fork checker does not return a release page when platform package is absent`() {
+        assertNull(
+            selectForkUpdate(
+                releases = listOf(
+                    release(
+                        "6.0.0-beta02.xuanyu.3",
+                        asset("ani-6.0.0-beta02.xuanyu.3-macos-aarch64.dmg"),
+                    ),
+                ),
+                currentVersion = "6.0.0-beta02.xuanyu.2",
+                releaseClass = ReleaseClass.BETA,
+                platform = Platform.Windows(Arch.X86_64),
+            ),
+        )
+    }
+
+    @Test
+    fun `desktop asset selection respects operating system and architecture`() {
+        val assets = listOf(
+            asset("ani-version-windows-x86_64.zip"),
+            asset("ani-version-windows-aarch64.zip"),
+            asset("ani-version-linux-x86_64.appimage"),
+            asset("ani-version-macos-aarch64.dmg"),
+        )
+        assertEquals(
+            listOf("https://example.invalid/ani-version-windows-aarch64.zip"),
+            selectDownloadAssets(assets, Platform.Windows(Arch.AARCH64)),
+        )
+        assertEquals(
+            listOf("https://example.invalid/ani-version-linux-x86_64.appimage"),
+            selectDownloadAssets(assets, Platform.Linux(Arch.X86_64)),
+        )
+        assertEquals(
+            listOf("https://example.invalid/ani-version-macos-aarch64.dmg"),
+            selectDownloadAssets(assets, Platform.MacOS(Arch.AARCH64)),
+        )
     }
 
     @Test

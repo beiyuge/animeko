@@ -569,7 +569,9 @@ private fun EpisodeScreenTabletVeryWide(
                                     onRetryPikPak = vm::retryPikPakPlayback,
                                     onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
                                     pikPakAvailability = vm.pikPakEpisodeAvailability.collectAsStateWithLifecycle().value,
-                                    onRefreshPikPakAvailability = vm::refreshPikPakAvailability,
+                                    pikPakSelectorRequest = vm.pikPakSelectorRequest.collectAsStateWithLifecycle().value,
+                                    onRequestPikPakResourceSelection = vm::requestPikPakResourceSelection,
+                                    onFinishPikPakResourceSelection = vm::finishPikPakResourceSelection,
                                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                                 )
                             }
@@ -741,7 +743,9 @@ private fun EpisodeScreenContentPhone(
                     onRetryPikPak = vm::retryPikPakPlayback,
                     onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
                     pikPakAvailability = vm.pikPakEpisodeAvailability.collectAsStateWithLifecycle().value,
-                    onRefreshPikPakAvailability = vm::refreshPikPakAvailability,
+                    pikPakSelectorRequest = vm.pikPakSelectorRequest.collectAsStateWithLifecycle().value,
+                    onRequestPikPakResourceSelection = vm::requestPikPakResourceSelection,
+                    onFinishPikPakResourceSelection = vm::finishPikPakResourceSelection,
                     modifier = Modifier.fillMaxSize(),
                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                 )
@@ -1116,7 +1120,10 @@ private fun EpisodeVideo(
                             onViewKindChange,
                             page.fetchRequest,
                             { vm.updateFetchRequest(it) },
-                            onDismissRequest = { goBack() },
+                            onDismissRequest = {
+                                goBack()
+                                if (pikPakEnabled) vm.finishPikPakResourceSelection()
+                            },
                             onRefresh = { vm.refreshFetch() },
                             onRestartSource = { vm.restartSource(it) },
                         )
@@ -1131,7 +1138,13 @@ private fun EpisodeVideo(
             )
         },
         shareData = page.shareData,
-        onClickCache = { navigator.navigateSubjectCaches(vm.subjectId) },
+        onClickCache = {
+            if (pikPakEnabled) vm.requestPikPakResourceSelection()
+            else navigator.navigateSubjectCaches(vm.subjectId)
+        },
+        onOpenMediaSelector = {
+            if (pikPakEnabled) vm.requestPikPakResourceSelection(rematchCached = true)
+        },
         cacheToPikPak = pikPakEnabled,
         modifier = modifier
             .fillMaxWidth().background(Color.Black)

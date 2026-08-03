@@ -11,6 +11,7 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     `ani-mpp-lib-targets`
+    alias(libs.plugins.kotlin.plugin.serialization)
 
     // alias(libs.plugins.kotlinx.atomicfu)
 }
@@ -21,10 +22,12 @@ kotlin {
     }
     sourceSets.commonMain.dependencies {
         api(libs.kotlinx.coroutines.core)
+        implementation(libs.kotlinx.serialization.json)
         api(libs.mediamp.api)
         implementation(libs.kotlinx.collections.immutable)
         implementation(libs.atomicfu)
         api(projects.utils.io)
+        api(projects.utils.platform)
 
         api(projects.datasource.datasourceApi)
     }

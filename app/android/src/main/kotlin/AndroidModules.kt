@@ -245,6 +245,7 @@ fun getAndroidModules(
                     fallback = btFallback,
                     playbackCoordinator = get(),
                     torrentAccessPolicy = get(),
+                    subjectCollectionRepository = get(),
                 ),
             )
                 .plus(torrentResolvers)

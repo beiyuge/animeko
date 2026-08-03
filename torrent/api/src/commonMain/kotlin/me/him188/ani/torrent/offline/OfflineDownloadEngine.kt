@@ -87,6 +87,18 @@ data class OfflineDownloadNaming(
     val episodeTitle: String?,
     val episodeNumber: String?,
     val cachedSource: OfflineDownloadCachedSource? = null,
+    /** Strictly matched, already-aired episodes covered by the selected resource. */
+    val coveredEpisodes: List<OfflineDownloadEpisodeBinding> = emptyList(),
+    /** Maps each covered episode id to the concrete provider filename selected for that episode. */
+    val pickCoveredVideoFiles: ((candidateFilenames: List<String>) -> Map<String, String>)? = null,
+)
+
+data class OfflineDownloadEpisodeBinding(
+    val subjectId: String,
+    val subjectName: String,
+    val episodeId: String,
+    val episodeNumber: String,
+    val episodeTitle: String,
 )
 
 @Serializable
@@ -94,6 +106,8 @@ data class OfflineDownloadCachedSource(
     val subjectId: String,
     val episodeId: String,
     val sourcePayload: String,
+    /** Original magnet or torrent URL used to derive the provider's stable source key. */
+    val sourceUri: String? = null,
 )
 
 sealed interface OfflineDownloadProgress {

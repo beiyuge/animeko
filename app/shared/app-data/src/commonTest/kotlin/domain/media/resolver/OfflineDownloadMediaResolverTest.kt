@@ -36,6 +36,8 @@ import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
 import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryEntry
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryManifest
 import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
@@ -206,10 +208,50 @@ class OfflineDownloadMediaResolverTest {
         val cachedSource = requireNotNull(naming.cachedSource)
         assertEquals("123", cachedSource.subjectId)
         assertEquals("456", cachedSource.episodeId)
+        assertEquals("magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567", cachedSource.sourceUri)
         assertEquals(
             magnetMedia,
             DataStoreJson.decodeFromString(DefaultMedia.serializer(), cachedSource.sourcePayload),
         )
+    }
+
+    @Test
+    fun `missing exact PikPak binding requires rematch without resubmitting its payload`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            cachedResolveResult = null,
+            libraryEntries = listOf(
+                OfflineDownloadLibraryEntry(
+                    entryId = "123:456:missing",
+                    subjectId = "123",
+                    subjectName = "test",
+                    episodeId = "456",
+                    episodeNumber = "1",
+                    episodeTitle = "",
+                    sourceKey = "source",
+                    sourcePayload = "{}",
+                    resourceRootId = "missing",
+                    providerFileId = "missing",
+                    providerFileName = "missing.mkv",
+                    createdAt = 1,
+                    updatedAt = 1,
+                ),
+            ),
+        )
+        val cachedMedia = CachedMedia(
+            origin = magnetMedia,
+            cacheMediaSourceId = "pikpak-cloud-cache",
+            download = magnetMedia.download,
+            location = MediaSourceLocation.Online,
+        )
+
+        assertFailsWith<MediaResolutionException> {
+            OfflineDownloadMediaResolver(engine).resolve(
+                cachedMedia,
+                episode.copy(subjectId = 123, episodeId = 456),
+            )
+        }
+        assertEquals(0, engine.resolveCallCount)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -450,6 +492,7 @@ class OfflineDownloadMediaResolverTest {
         private val resolveThrows: Throwable? = null,
         private val candidateFilenames: List<String>? = null,
         private val cachedResolveResult: ResolvedMedia? = null,
+        libraryEntries: List<OfflineDownloadLibraryEntry> = emptyList(),
     ) : OfflineDownloadEngine, OfflineDownloadLibrary {
         override val id: String = "fake"
         override val displayName: String = "Fake"
@@ -461,7 +504,11 @@ class OfflineDownloadMediaResolverTest {
         var lastCachedEpisode: Pair<String, String>? = null
             private set
         override val libraryState: StateFlow<OfflineDownloadLibraryState> =
-            MutableStateFlow(OfflineDownloadLibraryState())
+            MutableStateFlow(
+                OfflineDownloadLibraryState(
+                    manifest = OfflineDownloadLibraryManifest(entries = libraryEntries),
+                ),
+            )
 
         override suspend fun resolve(
             uri: String,

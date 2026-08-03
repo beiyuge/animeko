@@ -61,9 +61,6 @@
     <string name="settings_pikpak_password">Password</string>
     <string name="settings_pikpak_password_description">Set a password in your PikPak account settings if you signed up via Google.</string>
     <string name="settings_pikpak_password_hidden">••••••••</string>
-    <string name="settings_pikpak_queue_title">Cache slots</string>
-    <string name="settings_pikpak_queue_description">How many recent sources to keep in PikPak\'s working folder before evicting the oldest. Higher makes re-plays instant at the cost of drive space. Drag past 13 for no eviction at all.</string>
-    <string name="settings_pikpak_queue_unlimited">Unlimited</string>
     <string name="settings_pikpak_test_connection">Test connection</string>
     <string name="settings_pikpak_recommend_title">Align media selector?</string>
     <string name="settings_pikpak_recommend_message">PikPak only handles BitTorrent sources. Set "Preferred source type" to BT so the default selector routes through PikPak.</string>

@@ -331,6 +331,8 @@ private fun SubjectDetailsPage(
     BackHandler(enabled = imageViewer.viewing.value) { imageViewer.clear() }
 
     val presentation by state.presentation.collectAsStateWithLifecycle()
+    val pikPakEnabled = LocalPikPakEnabled.current
+    var selectEpisodeForPikPak by rememberSaveable { mutableStateOf(false) }
     val onEpisodeLongClick: (EpisodeListItem) -> Unit = {
         onEpisodeCollectionUpdate(
             SetEpisodeCollectionTypeRequest(
@@ -373,10 +375,27 @@ private fun SubjectDetailsPage(
         if (showSelectEpisode) {
             EpisodeListDialog(
                 presentation.episodeListUiState,
-                onDismissRequest = { showSelectEpisode = false },
-                { navigator.navigateSubjectCaches(presentation.subjectId) },
-                { navigator.navigateEpisodeDetails(presentation.subjectId, it.episodeId) },
+                onDismissRequest = {
+                    showSelectEpisode = false
+                    selectEpisodeForPikPak = false
+                },
+                {
+                    if (pikPakEnabled) {
+                        selectEpisodeForPikPak = true
+                    } else {
+                        navigator.navigateSubjectCaches(presentation.subjectId)
+                    }
+                },
+                {
+                    navigator.navigateEpisodeDetails(
+                        presentation.subjectId,
+                        it.episodeId,
+                        openMediaSelector = selectEpisodeForPikPak,
+                    )
+                    selectEpisodeForPikPak = false
+                },
                 onEpisodeLongClick,
+                cacheToPikPak = pikPakEnabled,
             )
         }
 
@@ -405,7 +424,14 @@ private fun SubjectDetailsPage(
                     onClickTag = onClickTag,
                     onClickLogin = onClickLogin,
                     onShowComments = { showComments = true },
-                    onClickCache = { navigator.navigateSubjectCaches(presentation.subjectId) },
+                    onClickCache = {
+                        if (pikPakEnabled) {
+                            selectEpisodeForPikPak = true
+                            showSelectEpisode = true
+                        } else {
+                            navigator.navigateSubjectCaches(presentation.subjectId)
+                        }
+                    },
                     modifier = modifier,
                     showTopBar = showTopBar,
                     windowInsets = windowInsets,
@@ -498,7 +524,14 @@ private fun SubjectDetailsPage(
                         onEpisodeLongClick = onEpisodeLongClick,
                         onClickTag = onClickTag,
                         onShowEpisodeList = { showSelectEpisode = true },
-                        onClickCache = { navigator.navigateSubjectCaches(presentation.subjectId) },
+                        onClickCache = {
+                            if (pikPakEnabled) {
+                                selectEpisodeForPikPak = true
+                                showSelectEpisode = true
+                            } else {
+                                navigator.navigateSubjectCaches(presentation.subjectId)
+                            }
+                        },
                         modifier = Modifier
                             .nestedScrollWorkaround(state.detailsTabLazyListState),
                         listState = state.detailsTabLazyListState,

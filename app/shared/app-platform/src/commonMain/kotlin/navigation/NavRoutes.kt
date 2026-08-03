@@ -107,6 +107,7 @@ sealed class NavRoutes {
     data class EpisodeDetail(
         val subjectId: Int,
         val episodeId: Int,
+        val openMediaSelector: Boolean = false,
     ) : NavRoutes()
 
     @Serializable

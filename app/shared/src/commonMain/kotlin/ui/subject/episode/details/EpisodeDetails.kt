@@ -241,7 +241,9 @@ fun EpisodeDetails(
     onRetryPikPak: () -> Unit = {},
     onUseAnitorrentOnce: (String) -> Unit = {},
     pikPakAvailability: OfflineEpisodeAvailability? = null,
-    onRefreshPikPakAvailability: () -> Unit = {},
+    pikPakSelectorRequest: Long = 0L,
+    onRequestPikPakResourceSelection: (refreshAiring: Boolean, rematchCached: Boolean) -> Unit = { _, _ -> },
+    onFinishPikPakResourceSelection: () -> Unit = {},
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
     danmakuListState: DanmakuListState? = null,
@@ -291,6 +293,9 @@ fun EpisodeDetails(
     val videoStatistics by videoStatisticsFlow.collectAsStateWithLifecycle(VideoStatistics.Placeholder)
     val atLeastMedium = currentWindowAdaptiveInfo1().isWidthAtLeastMedium
     var showMediaSelector by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pikPakSelectorRequest) {
+        if (pikPakSelectorRequest > 0L) showMediaSelector = true
+    }
 
     EditableSubjectCollectionTypeDialogsHost(editableSubjectCollectionTypeState)
 
@@ -387,7 +392,10 @@ fun EpisodeDetails(
                 if (windowAdaptiveInfo.isWidthAtLeastMedium) {
                     val sheetState = rememberModalSideSheetState()
                     ModalSideSheet(
-                        { showMediaSelector = false },
+                        {
+                            showMediaSelector = false
+                            onFinishPikPakResourceSelection()
+                        },
                         state = sheetState,
                         containerColor = BottomSheetDefaults.ContainerColor,
                     ) {
@@ -435,6 +443,7 @@ fun EpisodeDetails(
                                 onClickItem = {
                                     mediaSelectorState.select(it)
                                     showMediaSelector = false
+                                    onFinishPikPakResourceSelection()
                                 },
                                 scrollable = true,
                             )
@@ -444,7 +453,10 @@ fun EpisodeDetails(
                     val sheetState =
                         rememberModalBottomSheetState(skipPartiallyExpanded = windowAdaptiveInfo.isWidthAtLeastMedium)
                     ModalBottomSheet(
-                        { showMediaSelector = false },
+                        {
+                            showMediaSelector = false
+                            onFinishPikPakResourceSelection()
+                        },
                         sheetState = sheetState,
                         modifier = Modifier.desktopTitleBarPadding().statusBarsPadding(),
                         contentWindowInsets = {
@@ -469,6 +481,7 @@ fun EpisodeDetails(
                             onClickItem = {
                                 mediaSelectorState.select(it)
                                 showMediaSelector = false
+                                onFinishPikPakResourceSelection()
                             },
                             scrollable = sheetState.targetValue == SheetValue.Expanded,
                         )
@@ -480,14 +493,14 @@ fun EpisodeDetails(
                 if (atLeastMedium) {
                     MediaSelectorSummaryCard(
                         mediaSelectorSummary,
-                        onClickManualSelect = { showMediaSelector = true },
+                        onClickManualSelect = { onRequestPikPakResourceSelection(false, true) },
                         Modifier.fillMaxWidth().padding(innerPadding),
                         isHdr = videoStatistics.isHdr,
                     )
                 } else {
                     MediaSelectorSummaryBanner(
                         mediaSelectorSummary,
-                        onClickSwitchSource = { showMediaSelector = true },
+                        onClickSwitchSource = { onRequestPikPakResourceSelection(false, true) },
                         Modifier.fillMaxWidth().padding(innerPadding),
                         isHdr = videoStatistics.isHdr,
                     )
@@ -498,10 +511,14 @@ fun EpisodeDetails(
             if (videoStatistics.pikPakPlaybackState.status is PikPakPlaybackState.Status.Idle) {
                 PikPakEpisodeAvailabilityStatus(
                     pikPakAvailability,
-                    onSelectResource = { showMediaSelector = true },
+                    onSelectResource = {
+                        onRequestPikPakResourceSelection(
+                            false,
+                            pikPakAvailability == OfflineEpisodeAvailability.RemoteMissing,
+                        )
+                    },
                     onRefresh = {
-                        onRefreshPikPakAvailability()
-                        showMediaSelector = true
+                        onRequestPikPakResourceSelection(true, false)
                     },
                 )
             }
@@ -510,8 +527,7 @@ fun EpisodeDetails(
                 onRetry = onRetryPikPak,
                 onUseAnitorrentOnce = onUseAnitorrentOnce,
                 onRematch = {
-                    onRefreshMediaSources()
-                    showMediaSelector = true
+                    onRequestPikPakResourceSelection(false, true)
                 },
             )
         },

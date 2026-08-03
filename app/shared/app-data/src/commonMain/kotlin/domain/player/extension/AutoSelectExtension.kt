@@ -14,10 +14,15 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.episode.EpisodeSession
+import me.him188.ani.app.domain.media.cache.storage.PIKPAK_CACHE_MEDIA_SOURCE_ID
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.MediaSelectorAutoSelectUseCase
+import me.him188.ani.datasources.api.CachedMedia
+import me.him188.ani.datasources.api.DefaultMedia
+import me.him188.ani.datasources.api.source.MediaSourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import org.koin.core.Koin
@@ -56,10 +61,28 @@ class AutoSelectExtension(
                     }
                     val subjectEntries = library.libraryState.value.entries
                         .filter { it.subjectId == info.subjectId.toString() }
-                    val targetCached = subjectEntries.any { it.episodeId == info.episodeId.toString() }
+                    val targetEntry = subjectEntries
+                        .filter { it.episodeId == info.episodeId.toString() }
+                        .maxWithOrNull(compareBy({ it.preferred }, { it.updatedAt }))
+                    if (targetEntry != null) {
+                        val origin = runCatching {
+                            DataStoreJson.decodeFromString(DefaultMedia.serializer(), targetEntry.sourcePayload)
+                        }.getOrNull()
+                        if (origin != null) {
+                            fetchSelect.mediaSelector.select(
+                                CachedMedia(
+                                    origin = origin,
+                                    cacheMediaSourceId = PIKPAK_CACHE_MEDIA_SOURCE_ID,
+                                    download = origin.download,
+                                    location = MediaSourceLocation.Online,
+                                ),
+                            )
+                            return@collectLatest
+                        }
+                    }
                     // Once a title has become a PikPak library, missing episodes are user-driven:
                     // the page distinguishes middle/tail/not-aired and opens one explicit selector.
-                    if (subjectEntries.isNotEmpty() && !targetCached) return@collectLatest
+                    if (subjectEntries.isNotEmpty()) return@collectLatest
                 }
                 mediaSelectorAutoSelectUseCase(fetchSelect.mediaFetchSession, fetchSelect.mediaSelector)
             }

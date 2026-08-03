@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.rounded.CloudCircle
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +59,7 @@ fun EpisodeListDialog(
     onCollectionUpdate: (episode: EpisodeListItem) -> Unit,
     onSubjectDetailsClick: (() -> Unit)? = null,
     properties: DialogProperties = DialogProperties(),
+    cacheToPikPak: Boolean = false,
 ) {
     val scrollState = rememberScrollState()
     val scrollbarEndPadding = if (scrollState.hasScrollableContent()) 16.dp else 0.dp
@@ -148,7 +150,10 @@ fun EpisodeListDialog(
                 }
 
                 IconButton(onCacheClick, Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-                    Icon(Icons.Rounded.Download, stringResource(Lang.subject_episode_cache))
+                    Icon(
+                        if (cacheToPikPak) Icons.Rounded.CloudCircle else Icons.Rounded.Download,
+                        if (cacheToPikPak) "缓存至 PikPak" else stringResource(Lang.subject_episode_cache),
+                    )
                 }
             }
         }
