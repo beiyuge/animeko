@@ -38,9 +38,13 @@ import me.him188.ani.app.domain.media.resolver.LocalFileMediaResolver
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.media.resolver.OfflineDownloadMediaResolver
 import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
-import me.him188.ani.app.domain.mediasource.web.DesktopWebCaptchaCoordinator
-import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
+import me.him188.ani.app.domain.mediasource.web.DesktopOnnxImageCaptchaRecognizer
+import me.him188.ani.app.domain.mediasource.web.captcha.CaptchaBrowserFactory
+import me.him188.ani.app.domain.mediasource.web.captcha.DesktopCaptchaBrowserFactory
+import me.him188.ani.app.domain.mediasource.web.captcha.ImageCaptchaRecognizer
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSessionManager
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
+import me.him188.ani.app.domain.torrent.TorrentEngine
 import me.him188.ani.app.domain.torrent.TorrentManager
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.app.navigation.BrowserNavigator
@@ -64,6 +68,8 @@ import me.him188.ani.utils.io.resolve
 import me.him188.ani.utils.io.toKtPath
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
+import me.him188.ani.utils.platform.Arch
+import me.him188.ani.utils.platform.Platform
 import me.him188.ani.utils.platform.currentPlatformDesktop
 import org.koin.dsl.module
 import org.openani.mediamp.MediampPlayerFactory
@@ -75,6 +81,11 @@ import org.openani.mediamp.vlc.VlcMediampPlayerFactory
 import org.openani.mediamp.vlc.compose.VlcMediampPlayerSurfaceProvider
 import java.io.File
 import kotlin.io.path.Path
+
+internal fun isWindowsArm64(): Boolean {
+    val platform = currentPlatformDesktop()
+    return platform is Platform.Windows && platform.arch == Arch.AARCH64
+}
 
 fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) = module {
     single<TorrentEngineAccess> { PolicyAwareTorrentEngineAccess(get<LocalTorrentAccessPolicy>(), scope) }
@@ -108,6 +119,14 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
     }
 
     single<TorrentManager> {
+        if (isWindowsArm64()) {
+            // No Windows ARM64 anitorrent runtime is published; match iOS by exposing no local torrent engine.
+            logger<TorrentManager>().info { "Anitorrent is disabled on Windows ARM64" }
+            return@single object : TorrentManager {
+                override val engines: List<TorrentEngine> = emptyList()
+            }
+        }
+
         val saveDir = get<MediaSaveDirProvider>().saveDir
         logger<TorrentManager>().info { "TorrentManager base save dir: $saveDir" }
 
@@ -145,7 +164,8 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
         MediampPlayerFactoryLoader.first()
     }
     single<BrowserNavigator> { DesktopBrowserNavigator() }
-    single<WebCaptchaCoordinator> { DesktopWebCaptchaCoordinator(AniDesktopCaptchaTopBar) }
+    single<CaptchaBrowserFactory> { DesktopCaptchaBrowserFactory() }
+    single<ImageCaptchaRecognizer> { DesktopOnnxImageCaptchaRecognizer() }
     single<HlsPlaybackPreparer> { PlatformHlsPlaybackPreparer(get()) }
     single<OfflineDownloadEngine> {
         val settings = get<SettingsRepository>()
@@ -213,7 +233,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
                     DesktopWebMediaResolver(
                         getContext(),
                         get<MediaSourceManager>().webVideoMatcherLoader,
-                        get<WebCaptchaCoordinator>(),
+                        get<WebSessionManager>(),
                     ),
                 ),
         )

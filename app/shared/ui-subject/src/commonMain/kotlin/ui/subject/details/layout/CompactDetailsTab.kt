@@ -49,12 +49,14 @@ import me.him188.ani.app.ui.subject.details.sections.CharactersSection
 import me.him188.ani.app.ui.subject.details.sections.EpisodesRow
 import me.him188.ani.app.ui.subject.details.sections.SectionHeader
 import me.him188.ani.app.ui.subject.details.sections.SectionHeaderActionButton
+import me.him188.ani.app.ui.subject.details.sections.SectionHeaderCacheButton
 import me.him188.ani.app.ui.subject.details.sections.StaffSection
 import me.him188.ani.app.ui.subject.details.sections.SubjectInfoTable
 import me.him188.ani.app.ui.subject.details.sections.SubjectSummarySection
 import me.him188.ani.app.ui.subject.details.sections.SubjectTagsSection
 import me.him188.ani.app.ui.subject.details.sections.ViewAllSheet
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsState
+import me.him188.ani.app.ui.subject.episode.list.EpisodeListItem
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -68,8 +70,10 @@ internal fun CompactDetailsTabContent(
     state: SubjectDetailsState,
     info: SubjectInfo,
     onPlay: (episodeId: Int) -> Unit,
+    onEpisodeLongClick: (EpisodeListItem) -> Unit,
     onClickTag: (Tag) -> Unit,
     onShowEpisodeList: () -> Unit,
+    onClickCache: () -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(0.dp),
@@ -106,6 +110,7 @@ internal fun CompactDetailsTabContent(
                         stringResource(Lang.subject_details_episodes),
                         horizontalPaddingModifier,
                     ) {
+                        SectionHeaderCacheButton(onClickCache, showLabel = false)
                         SectionHeaderActionButton(onShowEpisodeList) {
                             AiringLabel(
                                 state.airingLabelState,
@@ -118,6 +123,7 @@ internal fun CompactDetailsTabContent(
                         episodes,
                         currentEpisodeId = currentEpisodeId,
                         onEpisodeClick = { onPlay(it.episodeId) },
+                        onEpisodeLongClick = onEpisodeLongClick,
                         contentPadding = horizontalPaddingValues,
                     )
                 }

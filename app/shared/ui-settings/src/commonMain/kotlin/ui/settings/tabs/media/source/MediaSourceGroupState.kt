@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 OpenAni and contributors.
+ * Copyright (C) 2024-2026 OpenAni and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
@@ -53,10 +53,11 @@ class MediaSourceLoader(
     parentCoroutineContext: CoroutineContext,
 ) {
     private val scope = parentCoroutineContext.childScope()
+    private val connectionTesters = MediaSourceConnectionTesterRegistry()
 
     val mediaSourcesFlow = mediaSourceManager.allInstances
         .combine(subscriptions) { instances, subscriptions ->
-            instances.mapNotNull { instance ->
+            val presentations = instances.mapNotNull { instance ->
                 val factory = findFactory(instance.factoryId) ?: return@mapNotNull null
                 MediaSourcePresentation(
                     instanceId = instance.instanceId,
@@ -65,21 +66,15 @@ class MediaSourceLoader(
                     factoryId = instance.factoryId,
                     info = instance.source.info,
                     parameters = factory.parameters,
-                    connectionTester = ConnectionTester(
-                        id = instance.mediaSourceId,
-                        testConnection = {
-                            when (instance.source.checkConnection()) {
-                                ConnectionStatus.SUCCESS -> ConnectionTestResult.SUCCESS
-                                ConnectionStatus.FAILED -> ConnectionTestResult.FAILED
-                            }
-                        },
-                    ),
+                    connectionTester = connectionTesters.getOrCreate(instance),
                     instance,
                     ownerSubscriptionUrl = instance.config.subscriptionId?.let { subscriptionId ->
                         subscriptions.find { it.subscriptionId == subscriptionId }?.url
                     },
                 )
             }
+            connectionTesters.retain(presentations.mapTo(mutableSetOf()) { it.instanceId })
+            presentations
             // 不能 sort, 会用来 reorder
         }
         .shareIn(scope, started = SharingStarted.WhileSubscribed(), replay = 1)
@@ -100,6 +95,68 @@ class MediaSourceLoader(
     private fun findFactory(factoryId: FactoryId): MediaSourceFactory? {
         return mediaSourceManager.allFactories.find { it.factoryId == factoryId }
     }
+}
+
+private class MediaSourceConnectionTesterRegistry {
+    private val holders = mutableMapOf<String, MediaSourceConnectionTesterHolder>()
+
+    fun getOrCreate(instance: MediaSourceInstance): ConnectionTester {
+        return holders.getOrPut(instance.instanceId) {
+            MediaSourceConnectionTesterHolder(instance)
+        }.also {
+            it.update(instance)
+        }.connectionTester
+    }
+
+    fun retain(instanceIds: Set<String>) {
+        holders.keys.retainAll(instanceIds)
+    }
+}
+
+private class MediaSourceConnectionTesterHolder(
+    instance: MediaSourceInstance,
+) {
+    private var latestInstance = instance
+    private var fingerprint = instance.connectionTestFingerprint()
+
+    var connectionTester: ConnectionTester = createConnectionTester(instance)
+        private set
+
+    fun update(instance: MediaSourceInstance) {
+        latestInstance = instance
+
+        val newFingerprint = instance.connectionTestFingerprint()
+        if (fingerprint != newFingerprint) {
+            fingerprint = newFingerprint
+            connectionTester = createConnectionTester(instance)
+        }
+    }
+
+    private fun createConnectionTester(instance: MediaSourceInstance): ConnectionTester {
+        return ConnectionTester(
+            id = instance.instanceId,
+            testConnection = {
+                when (latestInstance.source.checkConnection()) {
+                    ConnectionStatus.SUCCESS -> ConnectionTestResult.SUCCESS
+                    ConnectionStatus.FAILED -> ConnectionTestResult.FAILED
+                }
+            },
+        )
+    }
+}
+
+private data class MediaSourceConnectionTestFingerprint(
+    val mediaSourceId: String,
+    val factoryId: FactoryId,
+    val config: MediaSourceConfig,
+)
+
+private fun MediaSourceInstance.connectionTestFingerprint(): MediaSourceConnectionTestFingerprint {
+    return MediaSourceConnectionTestFingerprint(
+        mediaSourceId = mediaSourceId,
+        factoryId = factoryId,
+        config = config,
+    )
 }
 
 class MediaSourceGroupState(
@@ -143,8 +200,8 @@ class EditMediaSourceState(
     private val getConfigFlow: (instanceId: String) -> Flow<MediaSourceConfig>,
     private val onAdd: suspend (factoryId: FactoryId, instanceId: String, config: MediaSourceConfig) -> Unit,
     private val onEdit: suspend (instanceId: String, config: MediaSourceConfig) -> Unit,
-    private val onDelete: suspend (instanceId: String) -> Unit,
-    private val onSetEnabled: suspend (instanceId: String, enabled: Boolean) -> Unit,
+    private val onDelete: suspend (instanceIds: List<String>) -> Unit,
+    private val onSetEnabled: suspend (instanceIds: List<String>, enabled: Boolean) -> Unit,
     private val backgroundScope: CoroutineScope,
 ) {
     var editMediaSourceState by mutableStateOf<EditingMediaSource?>(null)
@@ -219,14 +276,22 @@ class EditMediaSourceState(
     }
 
     fun deleteMediaSource(item: MediaSourcePresentation) {
+        deleteMediaSources(listOf(item))
+    }
+
+    fun deleteMediaSources(items: Collection<MediaSourcePresentation>) {
         editTasker.launch {
-            onDelete(item.instanceId)
+            onDelete(items.map { it.instanceId })
         }
     }
 
     fun toggleMediaSourceEnabled(item: MediaSourcePresentation, enabled: Boolean) {
+        setMediaSourcesEnabled(listOf(item), enabled)
+    }
+
+    fun setMediaSourcesEnabled(items: Collection<MediaSourcePresentation>, enabled: Boolean) {
         editTasker.launch {
-            onSetEnabled(item.instanceId, enabled)
+            onSetEnabled(items.map { it.instanceId }, enabled)
         }
     }
 }

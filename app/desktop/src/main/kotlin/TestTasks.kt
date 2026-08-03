@@ -9,9 +9,12 @@
 
 package me.him188.ani.app.desktop
 
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.domain.foundation.HttpClientProvider
 import me.him188.ani.app.domain.foundation.ScopedHttpClientUserAgent
+import me.him188.ani.app.data.persistent.database.BundledSqliteInterpositionGuard
+import me.him188.ani.app.data.persistent.database.SqliteGlobalScopeProbe
 import me.him188.ani.app.domain.foundation.get
 import me.him188.ani.app.platform.DesktopContext
 import me.him188.ani.app.platform.currentAniBuildConfig
@@ -26,8 +29,11 @@ import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.Platform
 import me.him188.ani.utils.platform.currentPlatformDesktop
+import me.him188.ani.utils.platform.isLinux
 import org.koin.core.context.GlobalContext
 import org.koin.mp.KoinPlatform
+import org.openani.mediamp.ffmpeg.FFmpegKit
+import org.openani.mediamp.vlc.VlcMediampPlayer
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -40,6 +46,21 @@ object TestTasks {
         when (taskName) {
             "anitorrent-load-test" -> {
                 AnitorrentLibraryLoader.loadLibraries()
+                exitProcess(0)
+            }
+
+            "mediamp-ffmpeg-smoke-test" -> {
+                checkMediampFfmpeg()
+                exitProcess(0)
+            }
+
+            "mediamp-vlc-load-test" -> {
+                VlcMediampPlayer.prepareLibraries()
+                exitProcess(0)
+            }
+
+            "sqlite-bundled-load-test" -> {
+                checkBundledSqlite()
                 exitProcess(0)
             }
 
@@ -72,6 +93,60 @@ object TestTasks {
                 exitProcess(1)
             }
         }
+    }
+
+    private fun checkMediampFfmpeg() {
+        val runtimeDirectory = File(System.getProperty("compose.application.resources.dir"))
+            .parentFile.absolutePath
+        FFmpegKit.setRuntimeLibraryDirectory(runtimeDirectory, false)
+        val result = runBlocking {
+            FFmpegKit().execute(listOf("-version"))
+        }
+        check(result.isSuccess) { "FFmpeg smoke test failed: $result" }
+    }
+
+    private fun checkBundledSqlite() {
+        BundledSQLiteDriver().open(":memory:").use { }
+
+        // On Linux the driver loading successfully is not enough: #3188 and #3213 both crashed
+        // *after* a successful load, once a second sqlite build got into the process. Runs against
+        // the packaged AppImage after full startup, so JCEF/NSS and Koin have had their chance to
+        // break the ordering — which a unit test JVM cannot reproduce.
+        // See BundledSqliteInterpositionGuard for the two ordering constraints.
+        if (currentPlatformDesktop().isLinux()) {
+            val images = BundledSqliteInterpositionGuard.mappedSqliteJniImages()
+            check(images.size == 1) {
+                "expected exactly one libsqliteJni image in the process, got $images"
+            }
+            check(images.single().endsWith(BundledSqliteInterpositionGuard.LIB_FILE_NAME)) {
+                "the mapped libsqliteJni is not the guard's copy: ${images.single()}"
+            }
+            logger.info { "Bundled SQLite check: single image ${images.single()}" }
+
+            checkBundledSqliteOwnsGlobalScope()
+        }
+    }
+
+    /**
+     * Constraint 2 of [BundledSqliteInterpositionGuard]: the bundled sqlite must own the global
+     * scope, so that the system libsqlite3 cannot take the symbols over when CEF loads NSS later.
+     *
+     * This task exits the process long before JCEF initialization, so rather than reordering
+     * startup — every other verify task dispatches from the same point and would inherit a JCEF
+     * dependency — it publishes the system sqlite into the global scope itself, which is the only
+     * part of NSS that matters here.
+     */
+    private fun checkBundledSqliteOwnsGlobalScope() {
+        check(SqliteGlobalScopeProbe.loadSystemSqliteIntoGlobalScope()) {
+            "system libsqlite3 is not installed on this machine, so global scope ownership " +
+                    "cannot be verified; the check would pass vacuously"
+        }
+        val owner = SqliteGlobalScopeProbe.globalSqliteSymbolOwner()
+        check(owner != null && owner.endsWith(BundledSqliteInterpositionGuard.LIB_FILE_NAME)) {
+            "sqlite3_initialize resolves to $owner in the global scope, not the bundled library; " +
+                    "the guard ran too late and the system libsqlite3 has taken the symbols over"
+        }
+        logger.info { "Bundled SQLite check: global scope owned by $owner" }
     }
 
     // https://d.myani.org/v4.0.0-release-checksum-1/ani-4.0.0-release-checksum-1-macos-aarch64.dmg

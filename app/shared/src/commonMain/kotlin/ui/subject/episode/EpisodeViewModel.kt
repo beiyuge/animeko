@@ -60,11 +60,11 @@ import me.him188.ani.app.data.models.subject.nameCnOrName
 import me.him188.ani.app.data.network.AutoSkipRepository
 import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.episode.EpisodeCommentRepository
+import me.him188.ani.app.data.repository.RepositoryServiceUnavailableException
 import me.him188.ani.app.data.repository.player.DanmakuRegexFilterRepository
 import me.him188.ani.app.data.repository.subject.SetSubjectCollectionTypeOrDeleteUseCase
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.comment.PostCommentUseCase
-import me.him188.ani.app.domain.comment.TurnstileState
 import me.him188.ani.app.domain.danmaku.DanmakuRepository
 import me.him188.ani.app.domain.danmaku.SetDanmakuEnabledUseCase
 import me.him188.ani.app.domain.episode.EpisodeCompletionContext.isKnownCompleted
@@ -89,20 +89,24 @@ import me.him188.ani.app.domain.media.fetch.MediaSourceResultsFilterer
 import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.mediasource.GetPreferredWebMediaSourceUseCase
 import me.him188.ani.app.domain.mediasource.instance.GetMediaSourceInstancesUseCase
-import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSessionManager
 import me.him188.ani.app.domain.player.CacheProgressProvider
 import me.him188.ani.app.domain.player.extension.AnalyticsExtension
 import me.him188.ani.app.domain.player.extension.AutoSelectExtension
 import me.him188.ani.app.domain.player.extension.CacheOnBtPlayExtension
 import me.him188.ani.app.domain.player.extension.MarkAsWatchedExtension
 import me.him188.ani.app.domain.player.extension.ObserveWebMediaSourcePreferenceExtension
+import me.him188.ani.app.domain.player.extension.PlaybackSpeedExtension
 import me.him188.ani.app.domain.player.extension.RememberPlayProgressExtension
 import me.him188.ani.app.domain.player.extension.SaveMediaPreferenceExtension
 import me.him188.ani.app.domain.player.extension.SwitchMediaOnPlayerErrorExtension
 import me.him188.ani.app.domain.player.extension.SwitchNextEpisodeExtension
+import me.him188.ani.app.domain.player.extension.WatchTogetherPlayerExtension
 import me.him188.ani.app.domain.settings.GetDanmakuRegexFilterListFlowUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCase
+import me.him188.ani.app.domain.watchtogether.PlaybackAutomationGate
 import me.him188.ani.app.domain.usecase.GlobalKoin
+import me.him188.ani.app.navigation.EpisodeNavigationGuardRegistry
 import me.him188.ani.app.platform.Context
 import me.him188.ani.app.platform.media.SystemMediaMetadata
 import me.him188.ani.app.platform.media.createSystemMediaSessionRegistration
@@ -262,7 +266,6 @@ class EpisodeViewModel(
     private val setDanmakuEnabledUseCase: SetDanmakuEnabledUseCase by inject()
     private val postCommentUseCase: PostCommentUseCase by inject()
     private val autoSkipRepository: AutoSkipRepository by inject()
-    val turnstileState: TurnstileState by inject()
     private val getMediaSelectorSettings: GetMediaSelectorSettingsUseCase by inject()
     private val getMediaSourceInstances: GetMediaSourceInstancesUseCase by inject()
     val setEpisodeCollectionType: SetEpisodeCollectionTypeUseCase by inject()
@@ -270,8 +273,10 @@ class EpisodeViewModel(
     private val getDanmakuRegexFilterListFlowUseCase: GetDanmakuRegexFilterListFlowUseCase by inject()
     private val setSubjectCollectionTypeOrDeleteUseCase: SetSubjectCollectionTypeOrDeleteUseCase by inject()
     private val getPreferredWebMediaSource: GetPreferredWebMediaSourceUseCase by inject()
-    private val webCaptchaCoordinator: WebCaptchaCoordinator by inject()
     private val pikPakPlaybackCoordinator: PikPakPlaybackCoordinator by inject()
+    private val webSessionManager: WebSessionManager by inject()
+    private val playbackAutomationGate: PlaybackAutomationGate by inject()
+    val playbackAutomationSuppressed get() = playbackAutomationGate.suppressed
     // endregion
 
     private val tasker = SingleTaskExecutor(backgroundScope.coroutineContext)
@@ -281,12 +286,27 @@ class EpisodeViewModel(
 
     private val systemMediaSession = createSystemMediaSessionRegistration(context, player)
 
+    /** `null` 表示本次播放尚未调整过倍速, 此时跟随配置. */
+    private val playbackSpeedOverride = MutableStateFlow<Float?>(null)
+
+    /**
+     * 当前生效的倍速. 作用域为一次播放 (本 ViewModel 的生命周期), 播放页内切集保持.
+     */
+    private val playbackSpeedFlow: Flow<Float> = combine(
+        settingsRepository.videoScaffoldConfig.flow,
+        playbackSpeedOverride,
+    ) { config, override ->
+        override ?: config.playbackSpeed
+    }.distinctUntilChanged()
+
     @OptIn(UnsafeEpisodeSessionApi::class)
     private val fetchPlayState = EpisodeFetchSelectPlayState(
         subjectId, initialEpisodeId, player, backgroundScope,
         extensions = listOf(
             AnalyticsExtension,
+            PlaybackSpeedExtension.Factory(playbackSpeedFlow),
             RememberPlayProgressExtension,
+            WatchTogetherPlayerExtension,
             MarkAsWatchedExtension,
             CacheOnBtPlayExtension,
             SwitchNextEpisodeExtension.Factory(
@@ -384,6 +404,27 @@ class EpisodeViewModel(
 
     val videoScaffoldConfig: VideoScaffoldConfig by settingsRepository.videoScaffoldConfig
         .flow.produceState(VideoScaffoldConfig.Default)
+
+    /** 当前生效的用户倍速范围. */
+    val playbackSpeedRange: ClosedFloatingPointRange<Float>
+        get() = videoScaffoldConfig.minPlaybackSpeed..videoScaffoldConfig.maxPlaybackSpeed
+
+    /** 总是对本次播放生效; 仅在开启「记住播放倍速」时才另外写回配置. */
+    fun setPlaybackSpeed(speed: Float) {
+        playbackSpeedOverride.value = speed
+        launchInBackground {
+            if (settingsRepository.videoScaffoldConfig.flow.first().rememberPlaybackSpeed) {
+                settingsRepository.videoScaffoldConfig.update {
+                    copy(playbackSpeed = speed)
+                }
+            }
+        }
+    }
+
+    /**
+     * 桌面端: 用户是否通过播放器内按钮开启了窗口置顶. 退出播放页时需要自动取消置顶.
+     */
+    var desktopAlwaysOnTopSetByPlayer: Boolean = false
 
     val playerVolumeFlow: Flow<VideoScaffoldConfig.PlayerVolume> =
         settingsRepository.videoScaffoldConfig.flow.map { it.playerVolume }
@@ -644,22 +685,26 @@ class EpisodeViewModel(
             .flatMapLatest { episodeId ->
                 episodeCommentRepository.subjectEpisodeCommentsPager(
                     episodeId.toLong(),
-                    onAniLoadFailed = { commentLoadFailureChannel.trySend(it) },
+                    // Ani 评论正常但服务端没取到 Bangumi 评论: 列表照常显示, 额外提示一次, 免得看起来像"没有评论"
+                    onBangumiUnavailable = {
+                        commentLoadFailureChannel.trySend(
+                            RepositoryServiceUnavailableException("Bangumi episode comments unavailable"),
+                        )
+                    },
                 )
                     .map { page -> page.map { it.parseToUIComment() } }
             }.cachedIn(backgroundScope),
         countState = stateOf(null),
         onSubmitCommentReaction = { comment, value, selected ->
-            episodeCommentRepository.submitReaction(
-                episodeId = episodeIdFlow.first().toLong(),
-                source = when (comment.source) {
-                    UICommentSource.ANI -> me.him188.ani.app.data.models.episode.EpisodeCommentSource.ANI
-                    UICommentSource.BANGUMI -> me.him188.ani.app.data.models.episode.EpisodeCommentSource.BANGUMI
-                },
-                commentId = comment.sourceCommentId,
-                value = value,
-                selected = selected,
-            )
+            // Bangumi 评论只读, 不支持提交表情回应
+            if (comment.source == UICommentSource.ANI) {
+                episodeCommentRepository.submitReaction(
+                    episodeId = episodeIdFlow.first().toLong(),
+                    commentId = comment.sourceCommentId,
+                    value = value,
+                    selected = selected,
+                )
+            }
         },
         backgroundScope = backgroundScope,
         commentLoadFailures = commentLoadFailureChannel.receiveAsFlow(),
@@ -685,41 +730,44 @@ class EpisodeViewModel(
 
     // Combine original chapters with AutoSkip rules fetched from server
     @OptIn(UnsafeEpisodeSessionApi::class, InternalMediampApi::class)
-    private val autoSkipChaptersFlow: Flow<List<Chapter>> =
+    private val autoSkipChaptersFlow: Flow<List<Chapter>> = combine(
         fetchPlayState.episodeSessionFlow.flatMapLatest { session ->
             autoSkipRepository.rulesFlow(session.episodeId)
-        }.combine(
-            player.mediaProperties.mapNotNull { it?.durationMillis?.milliseconds },
-        ) { millisecondTimes, videoLength ->
-            val durationMillis = when {
-                videoLength > 20.minutes -> 85_000L
-                videoLength > 10.minutes -> 55_000L
-                else -> 0L
-            }
-            if (durationMillis == 0L) {
-                emptyList()
-            } else {
-                millisecondTimes.mapIndexed { index, t ->
-                    val name = if (millisecondTimes.size == 2) {
-                        val anotherIndex = if (index == 0) 1 else 0
-                        if (t <= millisecondTimes[anotherIndex]) {
-                            "OP"
-                        } else {
-                            "ED"
-                        }
-                    } else {
-                        "Ch ${index + 1}"
-                    }
-                    Chapter(
-                        name,
-                        durationMillis,
-                        t,
-                    )
-                }
-            }
-        }.catch {
-            logger.warn(it) { "Failed to fetch AutoSkip chapters" }
+        },
+        player.mediaProperties.mapNotNull { it?.durationMillis?.milliseconds },
+        settingsRepository.videoScaffoldConfig.flow
+            .map { it.opEdSkipDuration }
+            .distinctUntilChanged(),
+    ) { millisecondTimes, videoLength, opEdSkipDuration ->
+        val durationMillis = when {
+            videoLength > 20.minutes -> opEdSkipDuration.inWholeMilliseconds
+            videoLength > 10.minutes -> 55_000L
+            else -> 0L
         }
+        if (durationMillis == 0L) {
+            emptyList()
+        } else {
+            millisecondTimes.mapIndexed { index, t ->
+                val name = if (millisecondTimes.size == 2) {
+                    val anotherIndex = if (index == 0) 1 else 0
+                    if (t <= millisecondTimes[anotherIndex]) {
+                        "OP"
+                    } else {
+                        "ED"
+                    }
+                } else {
+                    "Ch ${index + 1}"
+                }
+                Chapter(
+                    name,
+                    durationMillis,
+                    t,
+                )
+            }
+        }
+    }.catch {
+        logger.warn(it) { "Failed to fetch AutoSkip chapters" }
+    }
 
 
     private val combinedChaptersFlow: Flow<List<Chapter>> =
@@ -822,7 +870,7 @@ class EpisodeViewModel(
                         mediaSourceInfoProvider,
                         getPreferredWebMediaSource(subjectId),
                         backgroundScope,
-                        webCaptchaCoordinator,
+                        webSessionManager,
                         onRequestOnlineResults = fetchSelect.mediaFetchSession::requestOnlineResults,
                     )
                 } else {
@@ -899,6 +947,9 @@ class EpisodeViewModel(
     }
 
     suspend fun switchEpisode(episodeId: Int) {
+        // 页内切集不经过 AniNavigator, 需在此单独过导航守卫 (如一起看跟随中只能去 host 所在集);
+        // 引导性的切集走 extension 的 context.switchEpisode, 不经过这里, 不受影响.
+        if (!EpisodeNavigationGuardRegistry.checkOrNotifyDenied(subjectId, episodeId)) return
         // 在后台 dispatchers 中操作
         backgroundScope.launch {
             fetchPlayState.switchEpisode(episodeId)
@@ -940,16 +991,19 @@ class EpisodeViewModel(
     }
 
     /**
-     * UI handler for the "skip 85 seconds" button.
+     * UI handler for the "skip OP/ED" button.
      * Reports the action to server with throttling and then performs the seek.
      */
     @OptIn(UnsafeEpisodeSessionApi::class)
-    fun onClickSkip85(currentPositionMillis: Long) {
+    fun onClickSkipOpEd(currentPositionMillis: Long) {
+        val skipDuration = videoScaffoldConfig.opEdSkipDuration
         // Seek immediately for UX
-        player.skip(85_000L)
+        player.skip(skipDuration.inWholeMilliseconds)
         // Report in background
         launchInBackground {
-            logger.info { "Reporting skip 85 at ${currentPositionMillis / 1000}s" }
+            logger.info {
+                "Reporting skip ${skipDuration.inWholeSeconds} at ${currentPositionMillis / 1000}s"
+            }
             val episodeId = fetchPlayState.getCurrentEpisodeId()
             val selected = fetchPlayState.episodeSessionFlow.firstOrNull()
                 ?.fetchSelectFlow
@@ -960,7 +1014,9 @@ class EpisodeViewModel(
             val mediaSourceId = selected?.mediaSourceId ?: return@launchInBackground
             val timeSeconds = (currentPositionMillis / 1000).toInt()
             if (timeSeconds < 0 || timeSeconds > 200 * 60) {
-                logger.warn { "Refusing to report skip 85 at invalid time ${timeSeconds}s" }
+                logger.warn {
+                    "Refusing to report skip ${skipDuration.inWholeSeconds} at invalid time ${timeSeconds}s"
+                }
                 return@launchInBackground
             }
             autoSkipRepository.reportSkip(episodeId, mediaSourceId, timeSeconds, currentPositionMillis)
@@ -1037,7 +1093,7 @@ class EpisodeViewModel(
                     ) { pos, id, collections ->
                         // 不止一集并且当前是第一集时不跳过
                         if (collections.size > 1 && collections.getOrNull(0)?.episodeId == id) return@combine
-                        playerSkipOpEdState.update(pos)
+                        if (!playbackAutomationGate.suppressed.value) playerSkipOpEdState.update(pos)
                     }.collect()
                 }
         }
@@ -1046,8 +1102,7 @@ class EpisodeViewModel(
     override fun onCleared() {
         super.onCleared()
         systemMediaSession.close()
-        turnstileState.cancel()
-        webCaptchaCoordinator.cancelAutoResolutionRequests()
+        webSessionManager.cancelAutoSolves()
         backgroundScope.launch(NonCancellable + CoroutineName("EpisodeViewModel#onCleared")) {
             fetchPlayState.onClose()
         }

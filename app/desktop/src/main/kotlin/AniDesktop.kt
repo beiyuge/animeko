@@ -22,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.InternalComposeUiApi
@@ -52,6 +53,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.him188.ani.app.data.models.preference.DarkMode
 import me.him188.ani.app.data.models.preference.UISettings
+import me.him188.ani.app.data.persistent.database.BundledSqliteInterpositionGuard
 import me.him188.ani.app.data.repository.SavedWindowState
 import me.him188.ani.app.data.repository.WindowStateRepository
 import me.him188.ani.app.data.repository.user.SettingsRepository
@@ -237,6 +239,11 @@ object AniDesktop {
         )
         startupTimeMonitor.mark(StepName.WindowAndContext)
 
+        // Covers constraint 2 in BundledSqliteInterpositionGuard: nothing about JCEF startup routes
+        // through the guard, so this explicit call is the only thing keeping the bundled sqlite
+        // ahead of the system libsqlite3 that CEF pulls in through NSS.
+        BundledSqliteInterpositionGuard.install(cacheDir)
+
         SingleInstanceChecker.instance.ensureSingleInstance()
         startupTimeMonitor.mark(StepName.SingletonChecker)
 
@@ -372,11 +379,10 @@ object AniDesktop {
                 } catch (e: Throwable) {
                     logger.error(e) { "Failed to load libmpv component of mediamp." }
                 }
-                logger.info { "libmpv is loaded." }
+                logger.info { "mediampv is loaded." }
             } else {
                 VlcMediampPlayer.prepareLibraries()
             }
-
         }
 
         // Initialize CEF application.
@@ -493,6 +499,8 @@ object AniDesktop {
             )
 
             val uiSettings by settingsRepository.uiSettings.flow.collectAsState(UISettings.Default)
+            // 窗口置顶为运行时状态, 不持久化, 关闭应用后自动清除
+            val alwaysOnTopState = remember { mutableStateOf(false) }
             val trayState = rememberAniTrayState()
             val appIcon = painterResource(Res.drawable.a_round)
 
@@ -514,6 +522,7 @@ object AniDesktop {
                 state = windowState,
                 title = "Ani",
                 icon = appIcon,
+                alwaysOnTop = alwaysOnTopState.value,
             ) {
                 // In dev mode this enables hot reload,
                 // In release mode this just executes the content
@@ -558,6 +567,7 @@ object AniDesktop {
                             platform = platform,
                             windowState = windowState,
                             layoutHitTestOwner = layoutHitTestOwner,
+                            alwaysOnTopState = alwaysOnTopState,
                         )
                     },
                     LocalOnBackPressedDispatcherOwner provides backPressedDispatcherOwner,

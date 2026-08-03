@@ -11,17 +11,23 @@ package me.him188.ani.app.ui.settings.tabs.app
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowOutward
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.intl.Locale
@@ -37,13 +43,17 @@ import me.him188.ani.app.data.models.preference.ThemeSettings
 import me.him188.ani.app.data.models.preference.UISettings
 import me.him188.ani.app.data.models.preference.UpdateSettings
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
+import me.him188.ani.app.data.models.preference.WatchTogetherSettings
 import me.him188.ani.app.data.network.protocol.ReleaseClass
 import me.him188.ani.app.navigation.MainScreenPage
 import me.him188.ani.app.navigation.getIcon
 import me.him188.ani.app.navigation.getText
 import me.him188.ani.app.platform.currentAniBuildConfig
 import me.him188.ani.app.ui.foundation.LocalPlatform
+import me.him188.ani.app.ui.foundation.SteppedSlider
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
+import me.him188.ani.app.ui.foundation.animation.LocalAniMotionScheme
+import me.him188.ani.app.ui.foundation.quantizeSliderValue
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.settings_app_close_behavior
 import me.him188.ani.app.ui.lang.settings_app_close_behavior_exit
@@ -64,12 +74,17 @@ import me.him188.ani.app.ui.lang.settings_app_nsfw_hide
 import me.him188.ani.app.ui.lang.settings_app_search
 import me.him188.ani.app.ui.lang.settings_app_language_system
 import me.him188.ani.app.ui.lang.settings_player
+import me.him188.ani.app.ui.lang.settings_player_audio_time_stretch
+import me.him188.ani.app.ui.lang.settings_player_audio_time_stretch_description
 import me.him188.ani.app.ui.lang.settings_player_auto_fullscreen_on_landscape
 import me.him188.ani.app.ui.lang.settings_player_auto_mark_done
 import me.him188.ani.app.ui.lang.settings_player_auto_play_next
 import me.him188.ani.app.ui.lang.settings_player_auto_skip_op_ed
 import me.him188.ani.app.ui.lang.settings_player_auto_skip_op_ed_description
 import me.him188.ani.app.ui.lang.settings_player_auto_switch_media_on_error
+import me.him188.ani.app.utils.formatSpeedValue
+import me.him188.ani.app.ui.lang.settings_player_default_playback_speed
+import me.him188.ani.app.ui.lang.settings_player_default_playback_speed_description
 import me.him188.ani.app.ui.lang.settings_player_experimental_hls_segment_filter
 import me.him188.ani.app.ui.lang.settings_player_experimental_hls_segment_filter_description
 import me.him188.ani.app.ui.lang.settings_player_enable_regex_filter
@@ -83,7 +98,13 @@ import me.him188.ani.app.ui.lang.settings_player_fullscreen_only_in_controller
 import me.him188.ani.app.ui.lang.settings_player_hide_selector_on_select
 import me.him188.ani.app.ui.lang.settings_player_long_press_fast_forward_speed
 import me.him188.ani.app.ui.lang.settings_player_long_press_fast_forward_speed_description
+import me.him188.ani.app.ui.lang.settings_player_op_ed_skip_duration
+import me.him188.ani.app.ui.lang.settings_player_op_ed_skip_duration_seconds
 import me.him188.ani.app.ui.lang.settings_player_pause_on_edit_danmaku
+import me.him188.ani.app.ui.lang.settings_player_playback_speed_range
+import me.him188.ani.app.ui.lang.settings_player_playback_speed_range_description
+import me.him188.ani.app.ui.lang.settings_player_remember_playback_speed
+import me.him188.ani.app.ui.lang.settings_player_remember_playback_speed_description
 import me.him188.ani.app.ui.lang.settings_update_auto_check
 import me.him188.ani.app.ui.lang.settings_update_auto_check_description
 import me.him188.ani.app.ui.lang.settings_update_auto_download
@@ -106,14 +127,19 @@ import me.him188.ani.app.ui.lang.settings_update_type_stable
 import me.him188.ani.app.ui.lang.settings_update_type_stable_short
 import me.him188.ani.app.ui.lang.settings_update_up_to_date
 import me.him188.ani.app.ui.lang.settings_update_view_changelog
+import me.him188.ani.app.ui.lang.settings_watch_together_description
+import me.him188.ani.app.ui.lang.settings_watch_together_social
+import me.him188.ani.app.ui.lang.watch_together_title
 import me.him188.ani.app.ui.settings.SettingsTab
 import me.him188.ani.app.ui.settings.danmaku.DanmakuRegexFilterGroup
 import me.him188.ani.app.ui.settings.danmaku.DanmakuRegexFilterState
 import me.him188.ani.app.ui.settings.danmaku.createTestDanmakuRegexFilterState
 import me.him188.ani.app.ui.settings.framework.SettingsState
 import me.him188.ani.app.ui.settings.framework.components.DropdownItem
+import me.him188.ani.app.ui.settings.framework.components.RangeSliderItem
 import me.him188.ani.app.ui.settings.framework.components.RowButtonItem
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
+import me.him188.ani.app.ui.settings.framework.components.SliderItem
 import me.him188.ani.app.ui.settings.framework.components.SwitchItem
 import me.him188.ani.app.ui.settings.framework.components.TextButtonItem
 import me.him188.ani.app.ui.settings.framework.components.TextItem
@@ -127,10 +153,12 @@ import me.him188.ani.app.ui.update.AppUpdateViewModel
 import me.him188.ani.app.ui.update.NewVersion
 import me.him188.ani.app.ui.update.UpdateNotifier
 import me.him188.ani.utils.platform.annotations.TestOnly
+import me.him188.ani.utils.platform.isAndroid
 import me.him188.ani.utils.platform.isDesktop
 import me.him188.ani.utils.platform.isIos
 import me.him188.ani.utils.platform.isMobile
 import org.jetbrains.compose.resources.stringResource
+import kotlin.time.Duration.Companion.seconds
 
 sealed class CheckVersionResult {
     data class HasNewVersion(
@@ -149,6 +177,7 @@ fun AppSettingsTab(
     uiSettings: SettingsState<UISettings>,
     themeSettings: SettingsState<ThemeSettings>,
     videoScaffoldConfig: SettingsState<VideoScaffoldConfig>,
+    watchTogetherSettings: SettingsState<WatchTogetherSettings>,
     danmakuFilterConfig: SettingsState<DanmakuFilterConfig>,
     danmakuRegexFilterState: DanmakuRegexFilterState,
     showDebug: Boolean,
@@ -164,7 +193,21 @@ fun AppSettingsTab(
             danmakuRegexFilterState,
             showDebug,
         )
+        WatchTogetherGroup(watchTogetherSettings)
         AppSettingsTabPlatform()
+    }
+}
+
+@Composable
+fun SettingsScope.WatchTogetherGroup(state: SettingsState<WatchTogetherSettings>) {
+    val config by state
+    Group(title = { Text(stringResource(Lang.settings_watch_together_social)) }, useThinHeader = true) {
+        SwitchItem(
+            checked = config.enabled,
+            onCheckedChange = { state.update(config.copy(enabled = it)) },
+            title = { Text(stringResource(Lang.watch_together_title)) },
+            description = { Text(stringResource(Lang.settings_watch_together_description)) },
+        )
     }
 }
 
@@ -502,6 +545,18 @@ fun SettingsScope.PlayerGroup(
             description = { Text(stringResource(Lang.settings_player_auto_skip_op_ed_description)) },
         )
         HorizontalDividerItem()
+        DropdownItem(
+            selected = { config.opEdSkipDuration },
+            values = { listOf(80.seconds, 85.seconds, 90.seconds) },
+            itemText = {
+                Text(stringResource(Lang.settings_player_op_ed_skip_duration_seconds, it.inWholeSeconds))
+            },
+            onSelect = {
+                videoScaffoldConfig.update(config.copy(opEdSkipDuration = it))
+            },
+            title = { Text(stringResource(Lang.settings_player_op_ed_skip_duration)) },
+        )
+        HorizontalDividerItem()
         SwitchItem(
             checked = config.autoSwitchMediaOnPlayerError,
             onCheckedChange = {
@@ -509,6 +564,17 @@ fun SettingsScope.PlayerGroup(
             },
             title = { Text(stringResource(Lang.settings_player_auto_switch_media_on_error)) },
         )
+        if (LocalPlatform.current.isAndroid()) {
+            HorizontalDividerItem()
+            SwitchItem(
+                checked = config.enableHighQualityAudioTimeStretch,
+                onCheckedChange = {
+                    videoScaffoldConfig.update(config.copy(enableHighQualityAudioTimeStretch = it))
+                },
+                title = { Text(stringResource(Lang.settings_player_audio_time_stretch)) },
+                description = { Text(stringResource(Lang.settings_player_audio_time_stretch_description)) },
+            )
+        }
         HorizontalDividerItem()
         if (!LocalPlatform.current.isIos()) {
             SwitchItem(
@@ -530,17 +596,154 @@ fun SettingsScope.PlayerGroup(
             title = { Text(stringResource(Lang.settings_player_frame_preview)) },
             description = { Text(stringResource(Lang.settings_player_frame_preview_description)) },
         )
-        DropdownItem(
-            selected = { config.fastForwardSpeed },
-            values = { listOf(1.5f, 2f, 2.5f, 3f) },
-            itemText = { Text("${it}x") },
-            onSelect = {
-                videoScaffoldConfig.update(config.copy(fastForwardSpeed = it))
-            },
-            title = { Text(stringResource(Lang.settings_player_long_press_fast_forward_speed)) },
-            description = { Text(stringResource(Lang.settings_player_long_press_fast_forward_speed_description)) },
-        )
+        HorizontalDividerItem()
+        PlaybackSpeedItems(config, videoScaffoldConfig)
         PlayerGroupPlatform(videoScaffoldConfig)
+    }
+}
+
+/**
+ * 倍速范围 + 记住倍速 + 默认倍速 + 长按播放速度.
+ *
+ * 各条 Slider 共享范围拖动状态: 拖动范围 RangeSlider 期间, 下方各条 Slider 的范围和 clamp 后的值
+ * 实时跟随, 被 clamp 时通过动画过渡, 避免松手后数值「突变」.
+ */
+@Composable
+private fun SettingsScope.PlaybackSpeedItems(
+    config: VideoScaffoldConfig,
+    videoScaffoldConfig: SettingsState<VideoScaffoldConfig>,
+) {
+    val persistedRange = config.minPlaybackSpeed..config.maxPlaybackSpeed
+
+    // 范围拖动期间的瞬态值, 提交后清空; 拖动期间下方长按倍速 Slider 实时使用该范围
+    var rangeDragOverride by remember { mutableStateOf<ClosedFloatingPointRange<Float>?>(null) }
+    var rangeDragging by remember { mutableStateOf(false) }
+    val effectiveRange = rangeDragOverride ?: persistedRange
+    LaunchedEffect(persistedRange, rangeDragOverride, rangeDragging) {
+        if (!rangeDragging && rangeDragOverride == persistedRange) {
+            rangeDragOverride = null
+        }
+    }
+
+    RangeSliderItem(
+        value = effectiveRange,
+        onValueChange = {
+            rangeDragging = true
+            rangeDragOverride = VideoScaffoldConfig.normalizePlaybackSpeedRange(it, effectiveRange)
+        },
+        onValueChangeFinished = {
+            val finalRange = rangeDragOverride ?: return@RangeSliderItem
+            // 缩小范围时把相关值一并 clamp 进新区间；保留最终范围直到配置写回，避免短暂回跳
+            val committedConfig = config.withPlaybackSpeedRange(finalRange)
+            rangeDragging = false
+            rangeDragOverride = committedConfig.minPlaybackSpeed..committedConfig.maxPlaybackSpeed
+            videoScaffoldConfig.update(committedConfig)
+        },
+        valueRange = VideoScaffoldConfig.MIN_SUPPORTED_PLAYBACK_SPEED..VideoScaffoldConfig.MAX_SUPPORTED_PLAYBACK_SPEED,
+        steps = 14,
+        valueIndicator = { Text(it.formatSpeedValue()) },
+        valueLabel = {
+            Text("${effectiveRange.start.formatSpeedValue()}x–${effectiveRange.endInclusive.formatSpeedValue()}x")
+        },
+        title = { Text(stringResource(Lang.settings_player_playback_speed_range)) },
+        description = { Text(stringResource(Lang.settings_player_playback_speed_range_description)) },
+    )
+
+    // 范围变化以动画过渡, 避免 thumb 映射位置瞬移
+    val animatedRangeStart by animateFloatAsState(effectiveRange.start, label = "playbackSpeedRangeStart")
+    val animatedRangeEnd by animateFloatAsState(effectiveRange.endInclusive, label = "playbackSpeedRangeEnd")
+    val displayRange =
+        if (animatedRangeStart < animatedRangeEnd) animatedRangeStart..animatedRangeEnd else effectiveRange
+
+    HorizontalDividerItem()
+
+    SwitchItem(
+        checked = config.rememberPlaybackSpeed,
+        onCheckedChange = {
+            videoScaffoldConfig.update(config.copy(rememberPlaybackSpeed = it))
+        },
+        title = { Text(stringResource(Lang.settings_player_remember_playback_speed)) },
+        description = { Text(stringResource(Lang.settings_player_remember_playback_speed_description)) },
+    )
+
+    // 此处没有 ColumnScope 接收者, 不显式指定就会落到 fadeIn/fadeOut 的重载上, 高度瞬间撑开、下方条目跳位.
+    val motionScheme = LocalAniMotionScheme.current.animatedVisibility
+    AniAnimatedVisibility(
+        visible = !config.rememberPlaybackSpeed,
+        enter = motionScheme.columnEnter,
+        exit = motionScheme.columnExit,
+    ) {
+        Column {
+            HorizontalDividerItem()
+            SpeedSliderItem(
+                value = config.playbackSpeed,
+                displayRange = displayRange,
+                commitRange = effectiveRange,
+                onCommit = { videoScaffoldConfig.update(config.copy(playbackSpeed = it)) },
+                title = { Text(stringResource(Lang.settings_player_default_playback_speed)) },
+                description = { Text(stringResource(Lang.settings_player_default_playback_speed_description)) },
+            )
+        }
+    }
+
+    HorizontalDividerItem()
+
+    SpeedSliderItem(
+        value = config.fastForwardSpeed,
+        displayRange = displayRange,
+        commitRange = effectiveRange,
+        onCommit = { videoScaffoldConfig.update(config.copy(fastForwardSpeed = it)) },
+        title = { Text(stringResource(Lang.settings_player_long_press_fast_forward_speed)) },
+        description = { Text(stringResource(Lang.settings_player_long_press_fast_forward_speed_description)) },
+    )
+}
+
+/**
+ * 一条倍速 Slider. 拖动期间使用瞬态值实时预览, 松手后量化到 [commitRange] 再提交.
+ *
+ * @param displayRange 渲染用范围, 可能正处于动画过渡中
+ * @param commitRange 提交用范围, 即用户配置的真实范围
+ */
+@Composable
+private fun SettingsScope.SpeedSliderItem(
+    value: Float,
+    displayRange: ClosedFloatingPointRange<Float>,
+    commitRange: ClosedFloatingPointRange<Float>,
+    onCommit: (Float) -> Unit,
+    title: @Composable RowScope.() -> Unit,
+    description: @Composable (() -> Unit)? = null,
+) {
+    var dragOverride by remember { mutableStateOf<Float?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    val displayValue = (dragOverride ?: value).coerceIn(displayRange)
+    LaunchedEffect(value, dragOverride, dragging) {
+        if (!dragging && dragOverride == value) {
+            dragOverride = null
+        }
+    }
+    SliderItem(
+        title = title,
+        description = description,
+        valueLabel = {
+            Text("${quantizeSliderValue(displayValue, displayRange).formatSpeedValue()}x")
+        },
+    ) {
+        SteppedSlider(
+            value = displayValue,
+            onValueChange = {
+                dragging = true
+                dragOverride = quantizeSliderValue(it, displayRange)
+            },
+            onValueChangeFinished = { displayedValue ->
+                val finalValue = dragOverride ?: displayedValue
+                val committedValue = quantizeSliderValue(finalValue, commitRange)
+                dragging = false
+                dragOverride = committedValue
+                onCommit(committedValue)
+            },
+            valueRange = displayRange,
+            valueIndicator = { Text(it.formatSpeedValue(), maxLines = 1, softWrap = false) },
+        )
     }
 }
 
@@ -594,6 +797,7 @@ private fun PreviewAppSettingsTab() {
         uiSettings = rememberTestSettingsState(UISettings.Default),
         themeSettings = rememberTestSettingsState(ThemeSettings.Default),
         videoScaffoldConfig = rememberTestSettingsState(VideoScaffoldConfig.Default),
+        watchTogetherSettings = rememberTestSettingsState(WatchTogetherSettings.Default),
         danmakuFilterConfig = rememberTestSettingsState(DanmakuFilterConfig.Default),
         danmakuRegexFilterState = createTestDanmakuRegexFilterState(),
         showDebug = true,

@@ -16,8 +16,8 @@ import me.him188.ani.app.data.persistent.database.dao.WebSearchSubjectInfoDao
 import me.him188.ani.app.data.persistent.database.dao.WebSearchSubjectInfoEntity
 import me.him188.ani.app.data.repository.media.SelectorMediaSourceEpisodeCacheRepository
 import me.him188.ani.app.domain.mediasource.rss.RssMediaSource
-import me.him188.ani.app.domain.mediasource.web.NoopWebCaptchaCoordinator
 import me.him188.ani.app.domain.mediasource.web.SelectorMediaSource
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSessionManager
 import me.him188.ani.datasources.api.source.FactoryId
 import me.him188.ani.datasources.api.source.MediaSource
 import me.him188.ani.datasources.api.source.MediaSourceConfig
@@ -34,6 +34,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 class DataSourceRegistry(
     private val client: ScopedHttpClient,
+    /**
+     * 与 `selector_*` 工具共用同一个会话管理器: selector 源在这里也会自动解验证码,
+     * 解不掉时 `SelectorMediaSource` 抛 `BlockedException`, 由调用方作为该源的失败上报.
+     */
+    private val webSessionManager: WebSessionManager,
 ) {
     private val selectorRepository = SelectorMediaSourceEpisodeCacheRepository(
         InMemoryWebSearchSubjectInfoDao(),
@@ -49,7 +54,7 @@ class DataSourceRegistry(
         put(EmbyMediaSource.ID, EmbyMediaSource.Factory())
         put(IkarosMediaSource.ID, IkarosMediaSource.Factory())
         put(RssMediaSource.FactoryId.value, RssMediaSource.Factory())
-        put(SelectorMediaSource.FactoryId.value, SelectorMediaSource.Factory(selectorRepository, NoopWebCaptchaCoordinator))
+        put(SelectorMediaSource.FactoryId.value, SelectorMediaSource.Factory(selectorRepository, webSessionManager))
     }
 
     fun listToolsDefaultFactories(): List<String> {

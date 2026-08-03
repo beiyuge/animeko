@@ -18,7 +18,16 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import me.him188.ani.app.ui.foundation.effects.ComposeKey
 import me.him188.ani.app.ui.foundation.effects.onKey
-import me.him188.ani.app.videoplayer.ui.PlaybackSpeedControllerState
+import me.him188.ani.app.videoplayer.ui.nextPlaybackSpeed
+
+private val PLAYBACK_SPEED_SHORTCUTS = listOf(
+    ComposeKey.One to 1f,
+    ComposeKey.NumPad1 to 1f,
+    ComposeKey.Two to 2f,
+    ComposeKey.NumPad2 to 2f,
+    ComposeKey.Three to 3f,
+    ComposeKey.NumPad3 to 3f,
+)
 
 /**
  * Installs the player keyboard commands on a single focus target.
@@ -29,7 +38,9 @@ import me.him188.ani.app.videoplayer.ui.PlaybackSpeedControllerState
 internal fun Modifier.playerKeyboardShortcuts(
     seekerState: SwipeSeekerState,
     fastSkipState: FastSkipState?,
-    playbackSpeedControllerState: PlaybackSpeedControllerState?,
+    currentPlaybackSpeed: Float?,
+    playbackSpeedRange: ClosedFloatingPointRange<Float>,
+    onPlaybackSpeedChanged: (Float) -> Unit,
     volumeEnabled: Boolean,
     onVolumeUp: (fineAdjustment: Boolean) -> Unit,
     onVolumeDown: (fineAdjustment: Boolean) -> Unit,
@@ -66,15 +77,26 @@ internal fun Modifier.playerKeyboardShortcuts(
         .onKey(ComposeKey.Spacebar, onTogglePauseResume)
         .onKey(ComposeKey.Escape, onExitFullscreen)
         .onKey(ComposeKey.F, onToggleFullscreen)
-    if (playbackSpeedControllerState != null) {
+    if (currentPlaybackSpeed != null) {
         result = result
-            .onKey(ComposeKey.A, playbackSpeedControllerState::speedDown)
-            .onKey(ComposeKey.D, playbackSpeedControllerState::speedUp)
-            .onKey(ComposeKey.S, playbackSpeedControllerState::reset)
+            .onKey(ComposeKey.A) {
+                onPlaybackSpeedChanged(nextPlaybackSpeed(currentPlaybackSpeed, playbackSpeedRange, -1))
+            }
+            .onKey(ComposeKey.D) {
+                onPlaybackSpeedChanged(nextPlaybackSpeed(currentPlaybackSpeed, playbackSpeedRange, 1))
+            }
+            .onKey(ComposeKey.S) {
+                onPlaybackSpeedChanged(1f.coerceIn(playbackSpeedRange))
+            }
+        for ((key, speed) in PLAYBACK_SPEED_SHORTCUTS) {
+            result = result.onKey(key) {
+                onPlaybackSpeedChanged(speed.coerceIn(playbackSpeedRange))
+            }
+        }
     }
     return result
         .onKey(ComposeKey.B, onToggleDanmaku)
-        .onKey(ComposeKey.Tab, onTogglePlayerStats)
+        .onKey(ComposeKey.I, onTogglePlayerStats)
         // The same node carries combinedClickable, which treats Enter as a click when focused.
         // Enter is not a player shortcut, so swallow it; DPad center is left for clickable so that
         // remote/DPad activation still works like a tap.

@@ -35,6 +35,8 @@ import me.him188.ani.tools.datasourcetestmcp.source.SourceTestResult
 import me.him188.ani.tools.datasourcetestmcp.source.SourceTestService
 import me.him188.ani.tools.datasourcetestmcp.source.TestResourcePageUrlInput
 import me.him188.ani.tools.datasourcetestmcp.source.TestSubjectEpisodeSourceInput
+import me.him188.ani.tools.datasourcetestmcp.video.DetectHlsAdsInput
+import me.him188.ani.tools.datasourcetestmcp.video.DetectHlsAdsResult
 import me.him188.ani.tools.datasourcetestmcp.video.ProbeVideoInput
 import me.him188.ani.tools.datasourcetestmcp.video.ProbeVideoResult
 import me.him188.ani.tools.datasourcetestmcp.video.VideoService
@@ -55,6 +57,7 @@ import me.him188.ani.tools.datasourcetestmcp.video.VideoService
  *
  * 视频能力
  * - `probe_video` 探测视频 URL 的可播放性与真实媒体信息
+ * - `detect_hls_ads` 不播放, 仅从 m3u8 结构 + Ani 客户端广告过滤器判断插入广告
  *
  * 兼容保留
  * - `test_subject_episode_source` 任意数据源端到端测试 (含 BT 源)
@@ -144,14 +147,20 @@ fun buildToolRegistrations(
             description = "Resolve playable video links for an Ani episode using a selector media source config, " +
                     "by running the full SelectorMediaSourceEngine pipeline: " +
                     "searchSubjects -> selectSubjects -> searchEpisodes -> selectEpisodes -> selectMedia, " +
-                    "then optionally WebView (CEF) video extraction and a playback probe. " +
+                    "then optionally WebView (CEF) video extraction and an HTTP availability probe. " +
                     "Returns a per-step trace (inputs, parsed results, errors) for debugging. " +
+                    "If the site is behind a captcha, it is solved automatically using the same strategies as the app " +
+                    "(reported as details.autoSolvedCaptcha); if it cannot be solved, the whole run stops immediately " +
+                    "with ok=false - do not retry with other keywords. " +
                     "Call get_selector_engine_docs for step semantics.",
             inputSchema = objectSchema(required = listOf("subjectId", "episodeId", "config")) {
                 put("subjectId", integerSchema("Ani subject ID"))
                 put("episodeId", integerSchema("Ani episode ID (from get_subject_episodes)"))
                 put("config", anySchema("Selector media source config JSON, same forms as validate_selector_config"))
-                put("maxSubjectsPerName", integerSchema("Max subject detail pages to visit per search keyword, default 3"))
+                put(
+                    "maxSubjectsPerName",
+                    integerSchema("Max subject detail pages to visit per search keyword, default 3"),
+                )
                 put("extractVideo", booleanSchema("Run WebView video URL extraction on matched medias, default true"))
                 put("probeVideo", booleanSchema("HTTP-probe extracted video URLs, default true"))
                 put("maxCandidatesToExtract", integerSchema("Max media candidates to run extraction on, default 3"))
@@ -184,6 +193,7 @@ fun buildToolRegistrations(
                     "selectMedia(config, episodes, query) converts episodes to medias and applies filters; " +
                     "matchWebVideo(config, url) tests whether a URL matches the video/nested-page regexes (offline); " +
                     "extractVideo(url, config?) loads a play page in a real WebView and intercepts the video URL. " +
+                    "Steps that fetch a page solve captchas automatically where possible, and abort the step when they cannot. " +
                     "Call get_selector_engine_docs for details.",
             inputSchema = objectSchema(required = listOf("step")) {
                 put(
@@ -194,7 +204,10 @@ fun buildToolRegistrations(
                         "selectEpisodes", "selectMedia", "matchWebVideo", "extractVideo",
                     ),
                 )
-                put("config", anySchema("Selector config JSON; required by all steps except searchEpisodes/extractVideo"))
+                put(
+                    "config",
+                    anySchema("Selector config JSON; required by all steps except searchEpisodes/extractVideo"),
+                )
                 put("keyword", stringSchema("searchSubjects: search keyword, usually the subject name"))
                 put(
                     "url",
@@ -203,13 +216,22 @@ fun buildToolRegistrations(
                                 "URL to test (matchWebVideo), or play page URL (extractVideo)",
                     ),
                 )
-                put("html", stringSchema("selectSubjects/selectEpisodes: parse this HTML instead of fetching url (offline debug)"))
-                put("subjectUrl", stringSchema("selectEpisodes: full URL of the subject detail page, used to resolve relative links"))
+                put(
+                    "html",
+                    stringSchema("selectSubjects/selectEpisodes: parse this HTML instead of fetching url (offline debug)"),
+                )
+                put(
+                    "subjectUrl",
+                    stringSchema("selectEpisodes: full URL of the subject detail page, used to resolve relative links"),
+                )
                 put(
                     "episodes",
                     buildJsonObject {
                         put("type", "array")
-                        put("description", JsonPrimitive("selectMedia: episode list, usually from selectEpisodes output"))
+                        put(
+                            "description",
+                            JsonPrimitive("selectMedia: episode list, usually from selectEpisodes output"),
+                        )
                         put(
                             "items",
                             objectSchema(required = listOf("name", "playUrl")) {
@@ -239,7 +261,10 @@ fun buildToolRegistrations(
                     },
                 )
                 put("maxHtmlLength", integerSchema("Max HTML characters to return, default 100000"))
-                put("probeResolvedVideo", booleanSchema("extractVideo: HTTP-probe the resolved video URL, default false"))
+                put(
+                    "probeResolvedVideo",
+                    booleanSchema("extractVideo: HTTP-probe the resolved video URL, default false"),
+                )
                 put("probeTimeoutMillis", integerSchema("Probe timeout in milliseconds, default 15000"))
             },
         ),
@@ -268,10 +293,12 @@ fun buildToolRegistrations(
         McpTool(
             name = "probe_video",
             description = "Test whether a final video URL (m3u8/mp4/mkv...) is actually playable in Animeko and report its real media info. " +
-                    "Runs an HTTP reachability probe, then plays the URL for a few seconds with Animeko's own desktop player " +
-                    "(mediamp-vlc, the same VLC pipeline the app uses), reporting resolution, duration, codecs, frame rate and bitrate. " +
+                    "Runs an HTTP reachability probe, then plays the URL for a few seconds with Animeko's own mpv pipeline " +
+                    "(mediamp-mpv, the same player core the desktop app uses on this platform), " +
+                    "reporting resolution, duration, codecs, frame rate and bitrate. " +
                     "By default a Compose test window pops up showing the actual playback. " +
-                    "Requires VLC 3.0.18 installed on the system; without it only the HTTP probe runs.",
+                    "mpv native libs are loaded automatically (override the directory with -Dani.mpv.native.dir); " +
+                    "without them only the HTTP probe runs.",
             inputSchema = objectSchema(required = listOf("videoUrl")) {
                 put("videoUrl", stringSchema("Final video URL"))
                 put(
@@ -284,16 +311,31 @@ fun buildToolRegistrations(
                 put("probeTimeoutMillis", integerSchema("HTTP probe timeout in milliseconds, default 15000"))
                 put("analyze", booleanSchema("Run the real-player playback test, default true"))
                 put("playSeconds", integerSchema("Seconds to actually play for the playability test, default 5"))
-                put("playTimeoutMillis", integerSchema("Timeout for entering/finishing playback in milliseconds, default 60000"))
+                put(
+                    "playTimeoutMillis",
+                    integerSchema("Timeout for entering/finishing playback in milliseconds, default 60000"),
+                )
                 put("showWindow", booleanSchema("Show a Compose window with the live playback, default true"))
-                put("detectAds", booleanSchema("Analyze the HLS playlist for ad splicing (discontinuities/foreign hosts), default true"))
-                put("captureFramesDir", stringSchema("If set, save first-frame and mid PNG screenshots into this dir for visual ad inspection"))
+                put(
+                    "detectAds",
+                    booleanSchema(
+                        "Analyze the HLS playlist for ad splicing (discontinuities/foreign hosts), default true; " +
+                                "also reports whether Animeko's client-side HLS ad filter would remove the segments",
+                    ),
+                )
+                put(
+                    "captureFramesDir",
+                    stringSchema("If set, save first-frame and mid PNG screenshots into this dir for visual ad inspection"),
+                )
                 put(
                     "captureAtSeconds",
                     buildJsonObject {
                         put("type", "array")
                         put("items", integerSchema("Playback position in seconds"))
-                        put("description", JsonPrimitive("Also capture a frame at each of these playback positions (frame_XXs.png); playSeconds must cover the max"))
+                        put(
+                            "description",
+                            JsonPrimitive("Also capture a frame at each of these playback positions (frame_XXs.png); playSeconds must cover the max"),
+                        )
                     },
                 )
             },
@@ -301,6 +343,34 @@ fun buildToolRegistrations(
     ) { args ->
         val input = json.decodeFromJsonElement(ProbeVideoInput.serializer(), args)
         json.encodeToJsonElement(ProbeVideoResult.serializer(), videoService.probeVideo(input))
+    },
+
+    McpToolRegistration(
+        McpTool(
+            name = "detect_hls_ads",
+            description = "Heuristically detect injected ads in an HLS (m3u8) stream WITHOUT playing it. " +
+                    "Fetches the playlist (follows master -> media), runs structural heuristics " +
+                    "(EXT-X-DISCONTINUITY markers, foreign segment hosts, duration outliers) AND Animeko's real " +
+                    "client-side HLS ad filter (HlsManifestFilter) to report whether the ad segments would be " +
+                    "auto-filtered in the app. " +
+                    "Returns suspected ad groups with start/end time offsets in seconds, so the caller can capture " +
+                    "frames at those positions (e.g. probe_video captureAtSeconds) for visual confirmation. " +
+                    "Note: burned-in watermark/banner ads are invisible to playlist analysis - " +
+                    "frame inspection is still required for those.",
+            inputSchema = objectSchema(required = listOf("url")) {
+                put("url", stringSchema("HLS playlist (m3u8) URL, master or media"))
+                put(
+                    "headers",
+                    buildJsonObject {
+                        put("type", "object")
+                        put("description", JsonPrimitive("Request headers, e.g. Referer / User-Agent"))
+                    },
+                )
+            },
+        ),
+    ) { args ->
+        val input = json.decodeFromJsonElement(DetectHlsAdsInput.serializer(), args)
+        json.encodeToJsonElement(DetectHlsAdsResult.serializer(), videoService.detectHlsAds(input))
     },
     // endregion
 

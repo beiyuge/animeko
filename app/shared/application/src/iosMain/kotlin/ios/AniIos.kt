@@ -57,8 +57,9 @@ import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.torrent.pikpak.PikPakCredentials
 import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
 import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
-import me.him188.ani.app.domain.mediasource.web.NoopWebCaptchaCoordinator
-import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
+import me.him188.ani.app.domain.mediasource.web.captcha.CaptchaBrowserFactory
+import me.him188.ani.app.domain.mediasource.web.captcha.ImageCaptchaRecognizer
+import me.him188.ani.app.domain.mediasource.web.captcha.UnsupportedCaptchaBrowserFactory
 import me.him188.ani.app.domain.torrent.DefaultTorrentManager
 import me.him188.ani.app.domain.torrent.TorrentManager
 import me.him188.ani.app.navigation.AniNavigator
@@ -205,38 +206,40 @@ private fun initializeIosFfmpegRuntime() {
 @Suppress("FunctionName", "unused") // used in Swift
 fun MainViewController(app: AniIosApplication): UIViewController {
     val contentViewController = ComposeUIViewController {
-        AniApp {
-            val platformWindow = rememberPlatformWindow()
-            CompositionLocalProvider(
-                LocalContext provides app.context,
-                LocalPlatformWindow provides platformWindow,
-                LocalOnBackPressedDispatcherOwner provides app.onBackPressedDispatcherOwner,
-            ) {
-                Box(
-                    Modifier.background(color = MaterialTheme.colorScheme.surfaceContainerLowest)
-                        .fillMaxSize(),
+        ProvideIosResourceEnvironment {
+            AniApp {
+                val platformWindow = rememberPlatformWindow()
+                CompositionLocalProvider(
+                    LocalContext provides app.context,
+                    LocalPlatformWindow provides platformWindow,
+                    LocalOnBackPressedDispatcherOwner provides app.onBackPressedDispatcherOwner,
                 ) {
-                    Box(Modifier.fillMaxSize()) {
-                        val paddingByWindowSize by animateDpAsState(0.dp)
+                    Box(
+                        Modifier.background(color = MaterialTheme.colorScheme.surfaceContainerLowest)
+                            .fillMaxSize(),
+                    ) {
+                        Box(Modifier.fillMaxSize()) {
+                            val paddingByWindowSize by animateDpAsState(0.dp)
 
-                        val vm = viewModel { ToastViewModel() }
+                            val vm = viewModel { ToastViewModel() }
 
-                        val showing by vm.showing.collectAsStateWithLifecycle()
-                        val content by vm.content.collectAsStateWithLifecycle()
+                            val showing by vm.showing.collectAsStateWithLifecycle()
+                            val content by vm.content.collectAsStateWithLifecycle()
 
-                        CompositionLocalProvider(
-                            LocalNavigator provides app.aniNavigator,
-                            LocalToaster provides remember {
-                                object : Toaster {
-                                    override fun toast(text: String) {
-                                        vm.show(text)
+                            CompositionLocalProvider(
+                                LocalNavigator provides app.aniNavigator,
+                                LocalToaster provides remember {
+                                    object : Toaster {
+                                        override fun toast(text: String) {
+                                            vm.show(text)
+                                        }
                                     }
+                                },
+                            ) {
+                                Box(Modifier.padding(all = paddingByWindowSize)) {
+                                    AniAppContent(app.aniNavigator)
+                                    Toast({ showing }, { Text(content) })
                                 }
-                            },
-                        ) {
-                            Box(Modifier.padding(all = paddingByWindowSize)) {
-                                AniAppContent(app.aniNavigator)
-                                Toast({ showing }, { Text(content) })
                             }
                         }
                     }
@@ -277,7 +280,9 @@ fun getIosModules(
         GrantedPermissionManager
     }
     single<BrowserNavigator> { IosBrowserNavigator() }
-    single<WebCaptchaCoordinator> { NoopWebCaptchaCoordinator }
+    // iOS 暂无 CaptchaBrowser 实现: isInteractiveSupported = false, UI 显示降级提示
+    single<CaptchaBrowserFactory> { UnsupportedCaptchaBrowserFactory }
+    single<ImageCaptchaRecognizer> { IosOnnxImageCaptchaRecognizer() }
     single<TorrentManager> {
         DefaultTorrentManager.create(
             coroutineScope.coroutineContext,

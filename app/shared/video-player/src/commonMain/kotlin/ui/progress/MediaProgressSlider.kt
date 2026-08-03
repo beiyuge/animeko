@@ -52,11 +52,14 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -64,6 +67,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -83,6 +87,8 @@ import me.him188.ani.app.ui.foundation.dialogs.PlatformPopupProperties
 import me.him188.ani.app.ui.foundation.effects.onPointerEventMultiplatform
 import me.him188.ani.app.ui.foundation.theme.slightlyWeaken
 import me.him188.ani.app.ui.foundation.theme.weaken
+import me.him188.ani.app.videoplayer.ui.gesture.SwipeSeekerConfig
+import me.him188.ani.app.videoplayer.ui.gesture.isVerticalDragCancelled
 import org.openani.mediamp.MediampPlayer
 import org.openani.mediamp.features.chapters
 import org.openani.mediamp.metadata.Chapter
@@ -155,6 +161,13 @@ class PlayerProgressSliderState(
         val ratio = this.previewPositionRatio
         if (ratio.isNaN()) return
         onPreviewFinished((ratio * totalDurationMillis).roundToLong())
+        previewPositionRatio = Float.NaN
+    }
+
+    /**
+     * Stops previewing without seeking to the previewed position.
+     */
+    fun cancelPreview() {
         previewPositionRatio = Float.NaN
     }
 }
@@ -253,6 +266,74 @@ class MediaProgressSliderColors(
 )
 
 /**
+ * 直接拖动进度条时的触摸手势状态机, 不参与鼠标交互.
+ *
+ * 状态只按以下路径迁移:
+ * ```
+ * Idle --start--> Seeking
+ * Seeking --move upward past threshold--> Cancelling
+ * Cancelling --move back within threshold--> Seeking
+ * Seeking / Cancelling --stop--> Idle
+ * ```
+ * [move] 根据手指相对按下点的上滑距离，在 [State.Seeking] 和 [State.Cancelling] 之间切换；
+ * [stop] 返回松手时是否处于取消状态，供进度条决定提交或放弃 seek.
+ * [onStateChanged] 只在状态实际变化时调用，控制器显隐和取消提示统一在这里响应.
+ */
+@Stable
+class TouchSeekState(
+    swipeSeekerConfig: SwipeSeekerConfig,
+    density: Density,
+    val onStateChanged: (State) -> Unit,
+) {
+    private val cancelVerticalDragDistancePx =
+        with(density) { swipeSeekerConfig.cancelVerticalDragDistance.toPx() }
+
+    enum class State {
+        Idle,
+        Seeking,
+        Cancelling,
+    }
+
+    var state: State = State.Idle
+        private set
+
+    private var dragStartY: Float = Float.NaN
+
+    internal fun onPointerDown(position: Offset) {
+        if (state == State.Idle && position.isSpecified) {
+            dragStartY = position.y
+        }
+    }
+
+    internal fun start() {
+        transitionTo(State.Seeking)
+    }
+
+    internal fun move(position: Offset): Boolean {
+        val cancelling = isVerticalDragCancelled(
+            dragStartY,
+            position,
+            cancelVerticalDragDistancePx,
+        )
+        return transitionTo(if (cancelling) State.Cancelling else State.Seeking)
+    }
+
+    internal fun stop(): Boolean {
+        val cancelled = state == State.Cancelling
+        transitionTo(State.Idle)
+        dragStartY = Float.NaN
+        return cancelled
+    }
+
+    private fun transitionTo(newState: State): Boolean {
+        if (state == newState) return false
+        state = newState
+        onStateChanged(newState)
+        return true
+    }
+}
+
+/**
  * 视频播放器的进度条, 支持拖动调整播放位置, 支持显示缓冲进度.
  */
 @Composable
@@ -264,6 +345,7 @@ fun MediaProgressSlider(
     showPreviewTimeTextOnThumb: Boolean = true,
     framePreview: MediaProgressFramePreviewState? = null,
     showFramePreviewInPopup: Boolean = true,
+    touchSeekState: TouchSeekState? = null,
 //    drawThumb: @Composable DrawScope.() -> Unit = {
 //        drawCircle(
 //            MaterialTheme.colorScheme.primary,
@@ -384,6 +466,8 @@ fun MediaProgressSlider(
         var mousePosX by rememberSaveable { mutableStateOf(0f) }
         var thumbWidth by rememberSaveable { mutableIntStateOf(0) }
         var sliderWidth by rememberSaveable { mutableIntStateOf(0) }
+        var latestTouchPreviewRatio by remember { mutableFloatStateOf(Float.NaN) }
+        var handlingTouchInput by remember { mutableStateOf(false) }
 
         fun renderPreviewTime(previewTimeMillis: Long): String {
             state.chapters.find {
@@ -488,7 +572,15 @@ fun MediaProgressSlider(
         Slider(
             value = state.displayPositionRatio,
             valueRange = 0f..1f,
-            onValueChange = { state.previewPositionRatio(it) },
+            onValueChange = {
+                if (handlingTouchInput && touchSeekState?.state == TouchSeekState.State.Idle) {
+                    touchSeekState.start()
+                }
+                latestTouchPreviewRatio = it
+                if (touchSeekState?.state != TouchSeekState.State.Cancelling) {
+                    state.previewPositionRatio(it)
+                }
+            },
             interactionSource = interactionSource,
             thumb = {
                 Canvas(Modifier.width(12.dp).height(24.dp)) {
@@ -538,7 +630,13 @@ fun MediaProgressSlider(
                 )
             },
             onValueChangeFinished = {
-                state.finishPreview()
+                val cancelled = handlingTouchInput && touchSeekState?.stop() == true
+                handlingTouchInput = false
+                if (cancelled) {
+                    state.cancelPreview()
+                } else {
+                    state.finishPreview()
+                }
             },
             enabled = enabled,
             modifier = Modifier.fillMaxWidth().height(24.dp)
@@ -546,8 +644,35 @@ fun MediaProgressSlider(
                     sliderWidth = it.width
                 }
                 .hoverable(interactionSource = hoverInteraction)
-                .onPointerEventMultiplatform(PointerEventType.Move) {
-                    mousePosX = it.changes.firstOrNull()?.position?.x ?: return@onPointerEventMultiplatform
+                .onPointerEventMultiplatform(
+                    PointerEventType.Press,
+                    pass = PointerEventPass.Initial,
+                ) { event ->
+                    val touchChange = event.changes.firstOrNull()
+                        ?.takeIf { it.type == PointerType.Touch }
+                    handlingTouchInput = touchChange != null
+                    touchChange?.let { touchSeekState?.onPointerDown(it.position) }
+                }
+                .onPointerEventMultiplatform(
+                    PointerEventType.Move,
+                    pass = PointerEventPass.Initial,
+                ) { event ->
+                    val change = event.changes.firstOrNull() ?: return@onPointerEventMultiplatform
+                    mousePosX = change.position.x
+
+                    val touchSeekState = touchSeekState ?: return@onPointerEventMultiplatform
+                    if (!handlingTouchInput || touchSeekState.state == TouchSeekState.State.Idle) {
+                        return@onPointerEventMultiplatform
+                    }
+                    if (!touchSeekState.move(change.position)) {
+                        return@onPointerEventMultiplatform
+                    }
+
+                    if (touchSeekState.state == TouchSeekState.State.Cancelling) {
+                        state.cancelPreview()
+                    } else if (!latestTouchPreviewRatio.isNaN()) {
+                        state.previewPositionRatio(latestTouchPreviewRatio)
+                    }
                 },
         )
     }

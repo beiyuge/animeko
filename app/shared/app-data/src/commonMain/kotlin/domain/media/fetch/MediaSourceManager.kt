@@ -40,7 +40,9 @@ import me.him188.ani.app.domain.mediasource.instance.MediaSourceInstance
 import me.him188.ani.app.domain.mediasource.instance.MediaSourceSave
 import me.him188.ani.app.domain.mediasource.rss.RssMediaSource
 import me.him188.ani.app.domain.mediasource.web.SelectorMediaSource
-import me.him188.ani.app.domain.mediasource.web.WebCaptchaCoordinator
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSessionManager
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceCookieJar
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceIdentityRegistry
 import me.him188.ani.app.domain.settings.ProxyProvider
 import me.him188.ani.app.platform.getAniUserAgent
 import me.him188.ani.app.tools.ServiceLoader
@@ -149,6 +151,20 @@ interface MediaSourceManager { // available by inject
     suspend fun setEnabled(instanceId: String, enabled: Boolean)
     suspend fun removeInstance(instanceId: String)
 
+    /**
+     * 批量启用或禁用数据源. 实现应当只触发一次 [allInstances] 更新.
+     */
+    suspend fun setEnabled(instanceIds: Collection<String>, enabled: Boolean) {
+        instanceIds.forEach { setEnabled(it, enabled) }
+    }
+
+    /**
+     * 批量移除数据源. 实现应当只触发一次 [allInstances] 更新.
+     */
+    suspend fun removeInstances(instanceIds: Collection<String>) {
+        instanceIds.forEach { removeInstance(it) }
+    }
+
     fun mediaSourceTiersFlow(): Flow<MediaSelectorSourceTiers>
 }
 
@@ -208,7 +224,9 @@ class MediaSourceManagerImpl(
     private val mikanIndexCacheRepository: MikanIndexCacheRepository by inject()
     private val instances: MediaSourceInstanceRepository by inject()
     private val selectorMediaSourceEpisodeCacheRepository: SelectorMediaSourceEpisodeCacheRepository by inject()
-    private val webCaptchaCoordinator: WebCaptchaCoordinator by inject()
+    private val webSessionManager: WebSessionManager by inject()
+    private val webSourceCookieJar: WebSourceCookieJar by inject()
+    private val webSourceIdentityRegistry: WebSourceIdentityRegistry by inject()
     private val clientProvider: HttpClientProvider by inject()
     private val codecManager: MediaSourceCodecManager by inject()
 
@@ -226,7 +244,7 @@ class MediaSourceManagerImpl(
         add(JellyfinMediaSource.Factory())
         add(EmbyMediaSource.Factory())
         add(IkarosMediaSource.Factory())
-        add(SelectorMediaSource.Factory(selectorMediaSourceEpisodeCacheRepository, webCaptchaCoordinator))
+        add(SelectorMediaSource.Factory(selectorMediaSourceEpisodeCacheRepository, webSessionManager))
     }.toList()
 
     private val additionalSources by lazy {
@@ -264,7 +282,12 @@ class MediaSourceManagerImpl(
                     config,
                     save.mediaSourceId,
                     save.config,
-                    clientProvider.get(ScopedHttpClientUserAgent.BROWSER),
+                    // web 源共享 cookie jar 与 per-host UA 对齐, 保证 HTTP 侧身份与浏览器一致
+                    clientProvider.get(
+                        ScopedHttpClientUserAgent.BROWSER,
+                        cookieJar = webSourceCookieJar,
+                        identityRegistry = webSourceIdentityRegistry,
+                    ),
                 ),
             )
         }
@@ -332,13 +355,26 @@ class MediaSourceManagerImpl(
         instances.remove(instanceId)
     }
 
+    override suspend fun setEnabled(instanceIds: Collection<String>, enabled: Boolean) {
+        instances.updateSaves(instanceIds) {
+            copy(isEnabled = enabled)
+        }
+    }
+
+    override suspend fun removeInstances(instanceIds: Collection<String>) {
+        instances.removeAll(instanceIds)
+    }
+
     override fun mediaSourceTiersFlow(): Flow<MediaSelectorSourceTiers> = instances.flow.map { list ->
+        val arguments = list.mapNotNull { save ->
+            save.getArgumentOrNull(codecManager)?.let { save.mediaSourceId to it }
+        }
         MediaSelectorSourceTiers(
-            buildMap {
-                for (save in list) {
-                    val argument = save.getArgumentOrNull(codecManager)
-                    if (argument != null) {
-                        put(save.mediaSourceId, argument.tier)
+            tiers = arguments.associate { (id, argument) -> id to argument.tier },
+            channelTiers = buildMap {
+                for ((id, argument) in arguments) {
+                    if (argument.channelTiers.isNotEmpty()) {
+                        put(id, argument.channelTiers)
                     }
                 }
             },

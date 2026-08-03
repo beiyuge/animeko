@@ -18,11 +18,19 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
+import me.him188.ani.app.domain.foundation.WebSourceIdentityFeatureHandler
 import me.him188.ani.app.domain.mediasource.web.DefaultSelectorMediaSourceEngine
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceCookieJar
+import me.him188.ani.app.domain.mediasource.web.captcha.WebSourceIdentityRegistry
+import me.him188.ani.tools.datasourcetestmcp.captcha.WebSourceSession
 import me.him188.ani.tools.datasourcetestmcp.info.AniInfoService
-import me.him188.ani.tools.datasourcetestmcp.mcp.StdioMcpServer
+import me.him188.ani.tools.datasourcetestmcp.mcp.McpRequestHandler
 import me.him188.ani.tools.datasourcetestmcp.mcp.buildToolRegistrations
+import me.him188.ani.tools.datasourcetestmcp.mcp.runHttpMcpServer
 import me.him188.ani.tools.datasourcetestmcp.resolver.WebViewVideoResolverEngine
 import me.him188.ani.tools.datasourcetestmcp.selector.SelectorEngineService
 import me.him188.ani.tools.datasourcetestmcp.source.DataSourceRegistry
@@ -32,14 +40,14 @@ import me.him188.ani.tools.datasourcetestmcp.video.MpvVideoAnalyzer
 import me.him188.ani.tools.datasourcetestmcp.video.VideoProbe
 import me.him188.ani.tools.datasourcetestmcp.video.VideoService
 import me.him188.ani.utils.ktor.asScopedHttpClient
-import java.io.FileDescriptor
-import java.io.FileOutputStream
-import java.io.PrintStream
 import kotlin.time.Duration.Companion.seconds
 
-fun main() {
-    val protocolOutput = System.out
-    System.setOut(PrintStream(FileOutputStream(FileDescriptor.err), true, Charsets.UTF_8))
+private const val DEFAULT_HOST = "127.0.0.1"
+private const val DEFAULT_PORT = 8264
+
+fun main(args: Array<String>) {
+    val host = cliOption(args, "--host") ?: DEFAULT_HOST
+    val port = cliOption(args, "--port")?.toIntOrNull() ?: DEFAULT_PORT
 
     val json = Json {
         ignoreUnknownKeys = true
@@ -47,6 +55,11 @@ fun main() {
         explicitNulls = false
         prettyPrint = true
     }
+
+    // web 数据源的统一身份: 浏览器解完验证码收集到的 cookie / UA 都落到这两处,
+    // 必须先于 HttpClient 建立, 才能作为 client 的 cookie 存储注入
+    val webSourceCookieJar = WebSourceCookieJar()
+    val webSourceIdentityRegistry = WebSourceIdentityRegistry()
 
     val client = HttpClient(OkHttp) {
         install(ContentNegotiation) {
@@ -56,7 +69,9 @@ fun main() {
             maxRetries = 1
             delayMillis { 1_000 }
         }
-        install(HttpCookies)
+        install(HttpCookies) {
+            storage = webSourceCookieJar
+        }
         install(HttpTimeout) {
             requestTimeoutMillis = 300.seconds.inWholeMilliseconds
             connectTimeoutMillis = 30.seconds.inWholeMilliseconds
@@ -71,14 +86,26 @@ fun main() {
         }
         expectSuccess = true
     }
-    try {
+    // cf_clearance 等 cookie 绑定 UA: 已解决的 host 用浏览器的真实 UA 发后续 HTTP 请求
+    WebSourceIdentityFeatureHandler.applyToClient(client, webSourceIdentityRegistry)
+
+    client.use { client ->
+        val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopedClient = client.asScopedHttpClient()
         val resolver = WebViewVideoResolverEngine()
         val probe = VideoProbe(client)
 
+        val webSourceSession = WebSourceSession(
+            client = scopedClient,
+            cookieJar = webSourceCookieJar,
+            identityRegistry = webSourceIdentityRegistry,
+            backgroundScope = backgroundScope,
+        )
+
         val aniInfoService = AniInfoService(client)
         val selectorEngineService = SelectorEngineService(
             engine = DefaultSelectorMediaSourceEngine(scopedClient),
+            webSource = webSourceSession,
             aniInfoService = aniInfoService,
             json = json,
             resolver = resolver,
@@ -91,15 +118,13 @@ fun main() {
         )
         val sourceTestService = SourceTestService(
             httpClient = client,
-            registry = DataSourceRegistry(scopedClient),
+            registry = DataSourceRegistry(scopedClient, webSourceSession.sessionManager),
             json = json,
             resolver = resolver,
             probe = probe,
         )
 
-        StdioMcpServer(
-            input = System.`in`,
-            output = protocolOutput,
+        val handler = McpRequestHandler(
             registrations = buildToolRegistrations(
                 json = json,
                 aniInfoService = aniInfoService,
@@ -108,8 +133,17 @@ fun main() {
                 sourceTestService = sourceTestService,
             ),
             json = json,
-        ).run()
-    } finally {
-        client.close()
+        )
+        println("animeko-datasource-test-mcp: starting HTTP MCP server at http://$host:$port/mcp")
+        runHttpMcpServer(host = host, port = port, handler = handler)
     }
+}
+
+/** 支持 `--port 8264` 与 `--port=8264` 两种写法 */
+private fun cliOption(args: Array<String>, name: String): String? {
+    args.forEachIndexed { index, arg ->
+        if (arg == name) return args.getOrNull(index + 1)
+        if (arg.startsWith("$name=")) return arg.substringAfter('=')
+    }
+    return null
 }

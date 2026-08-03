@@ -21,15 +21,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Analytics
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.rounded.DisplaySettings
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
@@ -42,6 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -65,7 +72,9 @@ import me.him188.ani.app.ui.foundation.TextWithBorder
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.foundation.effects.cursorVisibility
 import me.him188.ani.app.ui.foundation.icons.AniIcons
+import me.him188.ani.app.ui.foundation.icons.Forward80
 import me.him188.ani.app.ui.foundation.icons.Forward85
+import me.him188.ani.app.ui.foundation.icons.Forward90
 import me.him188.ani.app.ui.foundation.icons.RightPanelClose
 import me.him188.ani.app.ui.foundation.icons.RightPanelOpen
 import me.him188.ani.app.ui.foundation.icons.SubtitleGear
@@ -74,12 +83,13 @@ import me.him188.ani.app.ui.foundation.interaction.WindowDragArea
 import me.him188.ani.app.ui.foundation.rememberDebugSettingsViewModel
 import me.him188.ani.app.ui.foundation.theme.AniTheme
 import me.him188.ani.app.ui.lang.Lang
+import me.him188.ani.app.ui.lang.always_on_top
 import me.him188.ani.app.ui.lang.subject_episode_cache
 import me.him188.ani.app.ui.lang.subject_episode_collapse_sidebar
 import me.him188.ani.app.ui.lang.subject_episode_danmaku_settings_title
 import me.him188.ani.app.ui.lang.subject_episode_expand_sidebar
 import me.him188.ani.app.ui.lang.subject_episode_external_links
-import me.him188.ani.app.ui.lang.subject_episode_fast_forward_85_seconds
+import me.him188.ani.app.ui.lang.subject_episode_fast_forward_seconds
 import me.him188.ani.app.ui.lang.subject_episode_more_options
 import me.him188.ani.app.ui.lang.subject_episode_preview_mode
 import me.him188.ani.app.ui.lang.subject_episode_select_media_source
@@ -91,6 +101,7 @@ import me.him188.ani.app.ui.mediafetch.rememberTestMediaSelectorState
 import me.him188.ani.app.ui.mediafetch.request.TestMediaFetchRequest
 import me.him188.ani.app.ui.settings.danmaku.createTestDanmakuRegexFilterState
 import me.him188.ani.app.ui.subject.episode.details.components.ShareEpisodeDropdown
+import me.him188.ani.app.ui.subject.episode.video.DEFAULT_OP_ED_SKIP_DURATION
 import me.him188.ani.app.ui.subject.episode.video.components.EpisodeVideoSideSheetPage
 import me.him188.ani.app.ui.subject.episode.video.components.EpisodeVideoSideSheets
 import me.him188.ani.app.ui.subject.episode.video.components.FloatingFullscreenSwitchButton
@@ -103,7 +114,6 @@ import me.him188.ani.app.ui.subject.episode.video.sidesheet.MediaSelectorSheet
 import me.him188.ani.app.ui.subject.episode.video.sidesheet.rememberTestEpisodeSelectorState
 import me.him188.ani.app.ui.subject.episode.video.topbar.EpisodePlayerTitle
 import me.him188.ani.app.videoplayer.ui.ControllerVisibility
-import me.him188.ani.app.videoplayer.ui.NoOpPlaybackSpeedController
 import me.him188.ani.app.videoplayer.ui.NoOpVideoAspectRatio
 import me.him188.ani.app.videoplayer.ui.PlaybackSpeedControllerState
 import me.him188.ani.app.videoplayer.ui.PlayerControllerState
@@ -113,11 +123,13 @@ import me.him188.ani.app.videoplayer.ui.VideoPlayer
 import me.him188.ani.app.videoplayer.ui.VideoScaffold
 import me.him188.ani.app.videoplayer.ui.VideoSideSheetsController
 import me.him188.ani.app.videoplayer.ui.gesture.GestureFamily
+import me.him188.ani.app.videoplayer.ui.gesture.GestureIndicatorState
 import me.him188.ani.app.videoplayer.ui.gesture.GestureLock
 import me.him188.ani.app.videoplayer.ui.gesture.LevelController
 import me.him188.ani.app.videoplayer.ui.gesture.LockableVideoGestureHost
 import me.him188.ani.app.videoplayer.ui.gesture.NoOpLevelController
 import me.him188.ani.app.videoplayer.ui.gesture.ScreenshotButton
+import me.him188.ani.app.videoplayer.ui.gesture.SwipeSeekerConfig
 import me.him188.ani.app.videoplayer.ui.gesture.mouseFamily
 import me.him188.ani.app.videoplayer.ui.gesture.rememberGestureIndicatorState
 import me.him188.ani.app.videoplayer.ui.gesture.rememberSwipeSeekerState
@@ -133,6 +145,7 @@ import me.him188.ani.app.videoplayer.ui.progress.PlayerControllerDefaults.VideoA
 import me.him188.ani.app.videoplayer.ui.progress.PlayerProgressSliderState
 import me.him188.ani.app.videoplayer.ui.progress.ProgressSliderCenteredPreviewFrame
 import me.him188.ani.app.videoplayer.ui.progress.SubtitleSwitcher
+import me.him188.ani.app.videoplayer.ui.progress.TouchSeekState
 import me.him188.ani.app.videoplayer.ui.progress.rememberMediaProgressSliderState
 import me.him188.ani.app.videoplayer.ui.rememberAlwaysOnRequester
 import me.him188.ani.app.videoplayer.ui.rememberPlayerStatsState
@@ -141,6 +154,7 @@ import me.him188.ani.app.videoplayer.ui.rememberVideoSideSheetsController
 import me.him188.ani.app.videoplayer.ui.top.PlayerTopBar
 import me.him188.ani.app.videoplayer.ui.top.SystemTime
 import me.him188.ani.utils.platform.annotations.TestOnly
+import me.him188.ani.utils.platform.isAndroid
 import me.him188.ani.utils.platform.isDesktop
 import me.him188.ani.utils.platform.isMobile
 import org.jetbrains.compose.resources.stringResource
@@ -150,6 +164,7 @@ import org.openani.mediamp.features.subtitleTracks
 import org.openani.mediamp.isPlaying
 import org.openani.mediamp.test.TestMediampPlayer
 import org.openani.mediamp.togglePause
+import kotlin.time.Duration
 
 internal const val TAG_EPISODE_VIDEO_TOP_BAR = "EpisodeVideoTopBar"
 
@@ -172,7 +187,10 @@ internal fun EpisodeVideoImpl(
     hasNextEpisode: Boolean,
     onClickNextEpisode: () -> Unit,
     playerControllerState: PlayerControllerState,
-    onClickSkip85: (currentPositionMillis: Long) -> Unit = { playerState.skip(85_000L) },
+    opEdSkipDuration: Duration = DEFAULT_OP_ED_SKIP_DURATION,
+    onClickSkipOpEd: (currentPositionMillis: Long) -> Unit = {
+        playerState.skip(opEdSkipDuration.inWholeMilliseconds)
+    },
     title: @Composable () -> Unit,
     danmakuHost: @Composable () -> Unit,
     danmakuEnabled: Boolean,
@@ -180,6 +198,8 @@ internal fun EpisodeVideoImpl(
     videoLoadingStateFlow: Flow<VideoLoadingState>,
     onClickFullScreen: () -> Unit,
     onExitFullscreen: () -> Unit,
+    alwaysOnTop: Boolean = false,
+    onToggleAlwaysOnTop: (() -> Unit)? = null,
     danmakuEditor: @Composable() (RowScope.() -> Unit),
     onClickScreenshot: () -> Unit,
     detachedProgressSlider: @Composable () -> Unit,
@@ -222,6 +242,17 @@ internal fun EpisodeVideoImpl(
                     || anySideSheetVisible)
         }
     }
+    val indicatorState = rememberGestureIndicatorState()
+    val swipeSeekerConfig = SwipeSeekerConfig.Default
+    // 桌面设备可能同时支持鼠标和触摸；当前 GestureFamily 不能按单次输入来源分流，
+    // 因此桌面端仍使用 MOUSE 分支。后续实现来源级分流时再支持桌面触摸手势。
+    // TODO: 根据触控能力与平台特性建立设备抽象，并据此选择手势策略。
+    val touchSeekState = rememberPlayerTouchSeekState(
+        enabled = gestureFamily == GestureFamily.TOUCH,
+        controllerState = playerControllerState,
+        indicatorState = indicatorState,
+        swipeSeekerConfig = swipeSeekerConfig,
+    )
 
     AniTheme(darkModeOverride = DarkMode.DARK) {
         val progressSliderColors = MediaProgressSliderDefaults.colors()
@@ -247,7 +278,8 @@ internal fun EpisodeVideoImpl(
                             EpisodeVideoTopBarActions(
                                 playerState = playerState,
                                 expanded = expanded,
-                                onClickSkip85 = onClickSkip85,
+                                opEdSkipDuration = opEdSkipDuration,
+                                onClickSkipOpEd = onClickSkipOpEd,
                                 sheetsController = sheetsController,
                                 shareData = shareData,
                                 onClickCache = onClickCache,
@@ -256,6 +288,8 @@ internal fun EpisodeVideoImpl(
                                 onToggleSidebar = onToggleSidebar,
                                 playerStatsVisible = showPlayerStats,
                                 onTogglePlayerStats = { showPlayerStats = !showPlayerStats },
+                                alwaysOnTop = alwaysOnTop,
+                                onToggleAlwaysOnTop = onToggleAlwaysOnTop,
                             )
                         },
                         // VideoScaffold already applies top/horizontal insets around the top bar.
@@ -296,7 +330,10 @@ internal fun EpisodeVideoImpl(
                 }
             },
             gestureHost = {
-                val swipeSeekerState = rememberSwipeSeekerState(constraints.maxWidth) {
+                val swipeSeekerState = rememberSwipeSeekerState(
+                    constraints.maxWidth,
+                    swipeSeekerConfig,
+                ) {
                     playerState.skip(it * 1000L)
                 }
                 val videoPropertiesState by playerState.mediaProperties.collectAsState(null)
@@ -307,7 +344,6 @@ internal fun EpisodeVideoImpl(
                 }
 
                 val indicatorTasker = rememberUiMonoTasker()
-                val indicatorState = rememberGestureIndicatorState()
                 LockableVideoGestureHost(
                     playerControllerState,
                     swipeSeekerState,
@@ -385,7 +421,7 @@ internal fun EpisodeVideoImpl(
                 }
             },
             rhsButtons = {
-                if (expanded && LocalPlatform.current.isDesktop()) {
+                if (expanded && (LocalPlatform.current.isDesktop() || LocalPlatform.current.isAndroid())) {
                     ScreenshotButton(
                         onClick = onClickScreenshot,
                     )
@@ -436,7 +472,10 @@ internal fun EpisodeVideoImpl(
                         }
                     },
                     progressIndicator = {
-                        MediaProgressIndicatorText(progressSliderState)
+                        MediaProgressIndicatorText(
+                            progressSliderState,
+                            playbackSpeedState = playbackSpeedControllerState,
+                        )
                     },
                     progressSlider = {
                         PlayerControllerDefaults.MediaProgressSlider(
@@ -445,6 +484,7 @@ internal fun EpisodeVideoImpl(
                             showPreviewTimeTextOnThumb = expanded,
                             framePreview = framePreview,
                             showFramePreviewInPopup = expanded,
+                            touchSeekState = touchSeekState,
                         )
                     },
                     danmakuEditor = danmakuEditor,
@@ -494,6 +534,7 @@ internal fun EpisodeVideoImpl(
                         )
                     },
                     expanded = expanded,
+                    sliderOnly = playerControllerState.visibility == ControllerVisibility.InlineSliderOnly,
                 )
             },
             detachedProgressSlider = detachedProgressSlider,
@@ -504,11 +545,61 @@ internal fun EpisodeVideoImpl(
     }
 }
 
+/**
+ * 将进度条的通用触摸状态机接入播放器 UI：拖动期间保留 inline progress slider，
+ * 手指向上滑过取消阈值时持续显示取消提示。非触屏分支返回 `null`，不改变原有交互。
+ */
+@Composable
+private fun rememberPlayerTouchSeekState(
+    enabled: Boolean,
+    controllerState: PlayerControllerState,
+    indicatorState: GestureIndicatorState,
+    swipeSeekerConfig: SwipeSeekerConfig,
+): TouchSeekState? {
+    if (!enabled) return null
+
+    val density = LocalDensity.current
+    return remember(controllerState, indicatorState, swipeSeekerConfig, density) {
+        // 同一 TouchSeekState 生命周期内，每次请求都由固定 requester 和 indicator ticket 撤销。
+        val controllerRequester = Any()
+        var indicatorTicket: Int? = null
+        fun stopCancellationIndicator() {
+            indicatorTicket?.let(indicatorState::stopSeekCancellation)
+            indicatorTicket = null
+        }
+        TouchSeekState(
+            swipeSeekerConfig = swipeSeekerConfig,
+            density = density,
+            onStateChanged = { state ->
+                when (state) {
+                    // 手势结束：恢复控制器的正常显隐，并关闭可能存在的取消提示。
+                    TouchSeekState.State.Idle -> {
+                        controllerState.cancelRequestInlineProgressSlider(controllerRequester)
+                        stopCancellationIndicator()
+                    }
+
+                    // 正常拖动：保留 bottom bar 内正在接收触摸事件的原进度条。
+                    TouchSeekState.State.Seeking -> {
+                        controllerState.setRequestInlineProgressSlider(controllerRequester)
+                        stopCancellationIndicator()
+                    }
+
+                    // 进入取消区域：进度条保持原位，只将中央指示器切换为取消提示。
+                    TouchSeekState.State.Cancelling -> {
+                        indicatorTicket = indicatorState.startSeekCancellation()
+                    }
+                }
+            },
+        )
+    }
+}
+
 @Composable
 private fun EpisodeVideoTopBarActions(
     playerState: MediampPlayer,
     expanded: Boolean,
-    onClickSkip85: (currentPositionMillis: Long) -> Unit,
+    opEdSkipDuration: Duration,
+    onClickSkipOpEd: (currentPositionMillis: Long) -> Unit,
     sheetsController: VideoSideSheetsController<EpisodeVideoSideSheetPage>,
     shareData: MediaShareData,
     onClickCache: () -> Unit,
@@ -517,12 +608,15 @@ private fun EpisodeVideoTopBarActions(
     onToggleSidebar: (isCollapsed: Boolean) -> Unit,
     playerStatsVisible: Boolean,
     onTogglePlayerStats: () -> Unit,
+    alwaysOnTop: Boolean = false,
+    onToggleAlwaysOnTop: (() -> Unit)? = null,
 ) {
     var showShareDropdown by rememberSaveable { mutableStateOf(false) }
     var showMoreDropdown by rememberSaveable { mutableStateOf(false) }
     val dropdownAlwaysOnRequester = rememberAlwaysOnRequester(playerControllerState, "topBarExternalActions")
     val isExternalDropdownVisible = showShareDropdown || showMoreDropdown
-    val fastForward85SecondsText = stringResource(Lang.subject_episode_fast_forward_85_seconds)
+    val skipDurationSeconds = opEdSkipDuration.inWholeSeconds
+    val fastForwardSecondsText = stringResource(Lang.subject_episode_fast_forward_seconds, skipDurationSeconds)
     val selectMediaSourceText = stringResource(Lang.subject_episode_select_media_source)
     val danmakuSettingsTitleText = stringResource(Lang.subject_episode_danmaku_settings_title)
     val moreOptionsText = stringResource(Lang.subject_episode_more_options)
@@ -546,8 +640,13 @@ private fun EpisodeVideoTopBarActions(
         }
     }
 
-    IconButton({ onClickSkip85(playerState.getCurrentPositionMillis()) }) {
-        Icon(AniIcons.Forward85, fastForward85SecondsText)
+    IconButton({ onClickSkipOpEd(playerState.getCurrentPositionMillis()) }) {
+        val icon = when (skipDurationSeconds) {
+            85L -> AniIcons.Forward85
+            90L -> AniIcons.Forward90
+            else -> AniIcons.Forward80
+        }
+        Icon(icon, fastForwardSecondsText)
     }
 
     if (expanded) {
@@ -564,6 +663,22 @@ private fun EpisodeVideoTopBarActions(
         Modifier.testTag(TAG_SHOW_SETTINGS),
     ) {
         Icon(AniIcons.SubtitleGear, contentDescription = danmakuSettingsTitleText)
+    }
+
+    if (LocalPlatform.current.isDesktop() && onToggleAlwaysOnTop != null) {
+        val alwaysOnTopText = stringResource(Lang.always_on_top)
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+            tooltip = { PlainTooltip { Text(alwaysOnTopText) } },
+            state = rememberTooltipState(),
+        ) {
+            IconButton(onToggleAlwaysOnTop) {
+                Icon(
+                    if (alwaysOnTop) Icons.Rounded.PushPin else Icons.Outlined.PushPin,
+                    contentDescription = alwaysOnTopText,
+                )
+            }
+        }
     }
 
     Box {
@@ -685,7 +800,7 @@ private fun PreviewVideoScaffoldImpl(
         hasNextEpisode = true,
         onClickNextEpisode = {},
         playerControllerState = controllerState,
-        onClickSkip85 = { playerState.skip(85_000L) },
+        onClickSkipOpEd = { playerState.skip(DEFAULT_OP_ED_SKIP_DURATION.inWholeMilliseconds) },
         title = {
             EpisodePlayerTitle(
                 "28",
@@ -721,9 +836,7 @@ private fun PreviewVideoScaffoldImpl(
         cacheProgressInfoFlow = cacheProgressInfoFlow,
         audioController = NoOpLevelController,
         brightnessController = NoOpLevelController,
-        playbackSpeedControllerState = remember {
-            PlaybackSpeedControllerState(NoOpPlaybackSpeedController, scope = scope)
-        },
+        playbackSpeedControllerState = null,
         videoAspectRatioControllerState = remember {
             VideoAspectRatioControllerState(NoOpVideoAspectRatio, scope)
         },
