@@ -27,6 +27,8 @@ data class UpdateSettings(
      * 是否在应用内下载更新
      */
     val inAppDownload: Boolean = !currentPlatform().isIos(),
+    /** Last upstream GitHub release already surfaced on this device. */
+    val lastNotifiedUpstreamTag: String = "",
     @Suppress("PropertyName") @Transient val _placeholder: Int = 0,
 ) {
     // 有关默认的更新策略:

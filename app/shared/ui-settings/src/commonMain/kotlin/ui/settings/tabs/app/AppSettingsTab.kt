@@ -342,7 +342,7 @@ fun SettingsScope.SoftwareUpdateGroup(
         RowButtonItem(
             onClick = {
                 uriHandler.openUri(
-                    "https://github.com/open-ani/ani/releases/tag/v${currentAniBuildConfig.versionName}",
+                    "https://github.com/beiyuge/animeko/releases/tag/${currentAniBuildConfig.versionName}",
                 )
             },
             icon = { Icon(Icons.Rounded.ArrowOutward, null) },

@@ -25,6 +25,7 @@ import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
 import me.him188.ani.datasources.api.DefaultMedia
+import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.EpisodeSort
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.MediaExtraFiles
@@ -34,6 +35,8 @@ import me.him188.ani.datasources.api.topic.EpisodeRange
 import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.torrent.offline.ResolvedMedia
@@ -124,6 +127,35 @@ class OfflineDownloadMediaResolverTest {
         val opened = assertIs<PikPakStreamingMediaDataProvider>(provider)
             .open(kotlinx.coroutines.CoroutineScope(kotlin.coroutines.EmptyCoroutineContext))
         assertEquals("https://cdn.example/signed.mp4", opened.uri)
+    }
+
+    @Test
+    fun `PikPak cached media resolves by file id without submitting an offline task`() = runTest {
+        val engine = FakeEngine(
+            isSupported = true,
+            cachedResolveResult = ResolvedMedia(
+                streamUrl = "https://cdn.example/direct.mp4",
+                providerFileId = "pikpak-file-1",
+                isCloudCacheHit = true,
+            ),
+        )
+        val cachedMedia = CachedMedia(
+            origin = magnetMedia,
+            cacheMediaSourceId = "pikpak-cloud-cache",
+            download = magnetMedia.download,
+            location = MediaSourceLocation.Online,
+        )
+
+        val provider = OfflineDownloadMediaResolver(engine).resolve(
+            cachedMedia,
+            episode.copy(subjectId = 123, episodeId = 456),
+        )
+        val opened = assertIs<PikPakStreamingMediaDataProvider>(provider)
+            .open(CoroutineScope(kotlin.coroutines.EmptyCoroutineContext))
+
+        assertEquals("https://cdn.example/direct.mp4", opened.uri)
+        assertEquals(0, engine.resolveCallCount)
+        assertEquals("123" to "456", engine.lastCachedEpisode)
     }
 
     @Test
@@ -417,18 +449,26 @@ class OfflineDownloadMediaResolverTest {
         private val resolveResult: ResolvedMedia? = null,
         private val resolveThrows: Throwable? = null,
         private val candidateFilenames: List<String>? = null,
-    ) : OfflineDownloadEngine {
+        private val cachedResolveResult: ResolvedMedia? = null,
+    ) : OfflineDownloadEngine, OfflineDownloadLibrary {
         override val id: String = "fake"
         override val displayName: String = "Fake"
         override val isSupported: StateFlow<Boolean> = MutableStateFlow(isSupported)
         var lastNaming: OfflineDownloadNaming? = null
             private set
+        var resolveCallCount: Int = 0
+            private set
+        var lastCachedEpisode: Pair<String, String>? = null
+            private set
+        override val libraryState: StateFlow<OfflineDownloadLibraryState> =
+            MutableStateFlow(OfflineDownloadLibraryState())
 
         override suspend fun resolve(
             uri: String,
             pickVideoFile: (candidateFilenames: List<String>) -> String?,
             naming: OfflineDownloadNaming?,
         ): ResolvedMedia {
+            resolveCallCount++
             lastNaming = naming
             resolveThrows?.let { throw it }
             candidateFilenames?.let { candidates ->
@@ -442,6 +482,21 @@ class OfflineDownloadMediaResolverTest {
             return resolveResult
                 ?: error("FakeEngine configured with neither result nor exception")
         }
+
+        override suspend fun sync() = Unit
+
+        override suspend fun recordResolvedResource(entry: me.him188.ani.torrent.offline.OfflineDownloadLibraryEntry) = Unit
+
+        override suspend fun rematch(subjectId: String, episodeId: String, preferredEntryId: String) = Unit
+
+        override suspend fun resolveCachedEpisode(subjectId: String, episodeId: String): ResolvedMedia? {
+            lastCachedEpisode = subjectId to episodeId
+            return cachedResolveResult
+        }
+
+        override suspend fun deleteEpisode(subjectId: String, episodeId: String) = Unit
+
+        override suspend fun deleteUnmatched(providerFileId: String) = Unit
     }
 
     /**

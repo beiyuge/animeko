@@ -16,6 +16,7 @@ import io.github.nihildigit.pikpak.FileStat
 import io.github.nihildigit.pikpak.PikPakClient
 import io.github.nihildigit.pikpak.SessionStore
 import io.github.nihildigit.pikpak.batchDelete
+import io.github.nihildigit.pikpak.batchMove
 import io.github.nihildigit.pikpak.createUrlFile
 import io.github.nihildigit.pikpak.getFile
 import io.github.nihildigit.pikpak.getOrCreateDeepFolderId
@@ -50,10 +51,16 @@ import kotlinx.serialization.json.Json
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryEntry
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryManifest
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
+import me.him188.ani.torrent.offline.OfflineDownloadUnmatchedResource
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.torrent.offline.OfflineDownloadProgress
 import me.him188.ani.torrent.offline.ResolvedMedia
+import me.him188.ani.torrent.offline.mergeOfflineDownloadLibraryManifests
 import me.him188.ani.utils.io.DigestAlgorithm
 import me.him188.ani.utils.io.SystemPath
 import me.him188.ani.utils.io.createDirectories
@@ -71,6 +78,7 @@ import me.him188.ani.utils.logging.debug
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
+import me.him188.ani.utils.platform.currentTimeMillis
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -112,22 +120,11 @@ class PikPakOfflineDownloadEngine(
     private val resolveTimeout: Duration = 5.minutes,
     private val slotFolderName: String = "Animeko-Playing",
     private val metadataStorageDir: SystemPath? = null,
-    /**
-     * Supplies the user's desired slot-queue length at resolve time. Reading
-     * the lambda per-resolve means the engine picks up setting changes without
-     * needing a restart. Values `>= SLOT_QUEUE_UNLIMITED_SENTINEL` disable
-     * eviction entirely.
-     */
-    private val slotQueueLength: () -> Int = { 1 },
-) : OfflineDownloadEngine {
+) : OfflineDownloadEngine, OfflineDownloadLibrary {
 
     companion object {
-        /**
-         * When [slotQueueLength] returns this (or more), the engine stops
-         * evicting stale buckets — the user's PikPak drive becomes the limit.
-         * Matches `PikPakConfig.SLOT_QUEUE_UNLIMITED` on the app side.
-         */
-        const val SLOT_QUEUE_UNLIMITED_SENTINEL: Int = 14
+        /** Kept for source/test compatibility. Runtime queue eviction is no longer used. */
+        const val SLOT_QUEUE_UNLIMITED_SENTINEL: Int = Int.MAX_VALUE
     }
 
     private val logger = logger<PikPakOfflineDownloadEngine>()
@@ -154,19 +151,20 @@ class PikPakOfflineDownloadEngine(
     private var clientEntry: Pair<PikPakCredentials, PikPakClient>? = null
 
     // Serialises [resolve] across concurrent callers. The engine is a single
-    // per-process Koin instance and its slot lives on a shared PikPak folder
-    // ("Animeko-Playing"), so two concurrent resolves would race on
-    // listFiles → eviction → createBucket and could delete each other's
-    // in-flight buckets. withTimeout stays on the outside so the resolveTimeout
-    // budget covers queueing + work; a caller doesn't starve indefinitely
-    // behind an earlier resolve.
+    // per-process Koin instance and its library lives in one shared PikPak
+    // folder ("Animeko-Playing"), so two concurrent resolves would otherwise
+    // race while creating buckets and submitting tasks. withTimeout stays on
+    // the outside so the resolveTimeout budget covers queueing + work.
     private val resolveMutex = Mutex()
     private val metadataMutex = Mutex()
     private val metadataUploadMutex = Mutex()
+    private val libraryMutex = Mutex()
     private val resolvedMediaCache = PikPakResolvedMediaCache()
     private var resolvedMediaCacheCredentials: PikPakCredentials? = null
     private val persistedMappings = mutableMapOf<String, PikPakFileMapping>()
     private val metadataJson = Json { prettyPrint = true }
+    private val _libraryState = MutableStateFlow(OfflineDownloadLibraryState())
+    override val libraryState: StateFlow<OfflineDownloadLibraryState> = _libraryState
 
     init {
         // Pre-warm the bearer token whenever valid credentials are available.
@@ -179,7 +177,10 @@ class PikPakOfflineDownloadEngine(
             .distinctUntilChanged()
             .onEach { creds ->
                 scope.launch {
-                    runCatchingCancellable { clientFor(creds!!).login() }
+                    runCatchingCancellable {
+                        clientFor(creds!!).login()
+                        sync()
+                    }
                         .onFailure { logger.warn(it) { "[pikpak] pre-warm signin failed (non-fatal)" } }
                 }
             }
@@ -213,12 +214,19 @@ class PikPakOfflineDownloadEngine(
 
             val sourceKey = sourceKeyFor(uri)
             _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
-            resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = true)?.let { cached ->
+            resolveCachedSource(
+                client,
+                sourceKey,
+                pickVideoFile,
+                naming,
+                isCloudCacheHit = true,
+                resourceRootId = libraryState.value.entries.firstOrNull { it.sourceKey == sourceKey }?.resourceRootId,
+            )?.let { cached ->
                 logger.info { "[pikpak] memory cache hit: bucket=$sourceKey file=${cached.providerFileId}" }
                 return@withTimeout cached
             }
 
-            // Server-side playback cache:
+            // Server-side playback library:
             //
             // The engine maintains one well-known folder in the user's PikPak
             // drive (default name "Animeko-Playing"). Each source has a stable
@@ -227,13 +235,8 @@ class PikPakOfflineDownloadEngine(
             // Cleanup runs at the *start* of a later cache miss, not the end of
             // the current resolve, so the URL handed to the player remains valid.
             //
-            // Benefits over fire-and-forget batchDelete:
-            //   * State lives server-side. App crashes / restarts don't leak —
-            //     the next resolve() drains the slot anyway.
-            //   * No racing against libvlc's first GET (that was the root cause
-            //     of every "VLC is unable to open MRL" we hit).
-            //   * Season-pack siblings don't linger; the old pack folder is
-            //     cascade-deleted before the new task is submitted.
+            // State lives server-side and successful resources remain until an
+            // explicit library deletion. Failed submissions are still cleaned up.
             _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
             val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
 
@@ -258,25 +261,22 @@ class PikPakOfflineDownloadEngine(
                     .flatMap { collectSlotCandidates(client, it.id) }
                     .distinctBy(CachedPikPakFile::id)
                 resolvedMediaCache.replace(sourceKey, cached)
-                resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = true)?.let { hit ->
+                resolveCachedSource(
+                    client,
+                    sourceKey,
+                    pickVideoFile,
+                    naming,
+                    isCloudCacheHit = true,
+                    resourceRootId = matchingBuckets.first().id,
+                    sharedResource = cached.size > 1,
+                )?.let { hit ->
                     logger.info { "[pikpak] slot hit: bucket=$sourceKey file=${hit.providerFileId}" }
                     return@withTimeout hit
                 }
             }
 
-            // Slot miss → evict to honor the user-configured queue length.
-            val queueLen = slotQueueLength().coerceAtLeast(1)
-            val toEvict = pickEvictions(topEntries, sourceKey, queueLen)
-            if (toEvict.isNotEmpty()) {
-                logger.info { "[pikpak] draining slot: keeping ${(queueLen - 1).coerceAtLeast(0)} newest, deleting ${toEvict.size}" }
-                runCatchingCancellable { client.batchDelete(toEvict) }
-                    .onFailure { logger.warn(it) { "[pikpak] slot drain failed (non-fatal)" } }
-                val evictedSourceKeys = evictedSourceKeys(topEntries, toEvict)
-                evictedSourceKeys.forEach(resolvedMediaCache::remove)
-                scheduleLocalMappingCleanup(evictedSourceKeys)
-            } else if (queueLen >= SLOT_QUEUE_UNLIMITED_SENTINEL) {
-                logger.debug { "[pikpak] slot queue length = unlimited; skipping eviction" }
-            }
+            // Successful resources form a durable library. They are never evicted automatically;
+            // only an explicit library delete or failed-task cleanup removes provider objects.
 
             // Ensure this source's bucket exists, and submit the task *into
             // it*. PikPak lands everything from the task under parent_id, so
@@ -355,7 +355,15 @@ class PikPakOfflineDownloadEngine(
                 }
                 resolvedMediaCache.replace(sourceKey, candidates)
 
-                resolveCachedSource(client, sourceKey, pickVideoFile, naming, isCloudCacheHit = cloudCacheHit)
+                resolveCachedSource(
+                    client,
+                    sourceKey,
+                    pickVideoFile,
+                    naming,
+                    isCloudCacheHit = cloudCacheHit,
+                    resourceRootId = bucketId,
+                    sharedResource = rootInfo.kind == FileKind.FOLDER || candidates.size > 1,
+                )
                     ?: throw OfflineDownloadRejectedException(
                         "PikPak resource $sourceKey contains no cached playable file " +
                                 "(files: ${candidates.joinToString(limit = 10) { it.name }})",
@@ -466,6 +474,8 @@ class PikPakOfflineDownloadEngine(
         pickVideoFile: (candidateFilenames: List<String>) -> String?,
         naming: OfflineDownloadNaming?,
         isCloudCacheHit: Boolean,
+        resourceRootId: String? = null,
+        sharedResource: Boolean = false,
     ): ResolvedMedia? = resolvedMediaCache.resolve(sourceKey, pickVideoFile) { cachedFile ->
         _resolutionProgress.value = progressWhileSelectingFile(isCloudCacheHit)
         var detail = try {
@@ -483,8 +493,18 @@ class PikPakOfflineDownloadEngine(
             } else {
                 OfflineDownloadProgress.ResolvingStreamUrl
             }
-            buildResolvedMedia(detail).copy(isCloudCacheHit = isCloudCacheHit).also {
-                scheduleReadableFileMetadata(client, sourceKey, detail, naming)
+            buildResolvedMedia(detail).copy(
+                isCloudCacheHit = isCloudCacheHit,
+                providerRootId = resourceRootId ?: detail.id,
+            ).also {
+                scheduleReadableFileMetadata(
+                    client,
+                    sourceKey,
+                    detail,
+                    naming,
+                    resourceRootId ?: detail.id,
+                    sharedResource,
+                )
                 _resolutionProgress.value = OfflineDownloadProgress.Ready
             }
         } catch (e: OfflineDownloadRejectedException) {
@@ -519,6 +539,8 @@ class PikPakOfflineDownloadEngine(
         sourceKey: String,
         detail: FileDetail,
         naming: OfflineDownloadNaming?,
+        resourceRootId: String,
+        sharedResource: Boolean,
     ) {
         val storageDir = metadataDirForCurrentAccount() ?: return
         if (naming == null || detail.parentId.isEmpty() || detail.id.isEmpty()) return
@@ -545,6 +567,9 @@ class PikPakOfflineDownloadEngine(
                         providerFileId = detail.id,
                         observedFileName = detail.name,
                         previous = previous,
+                        resourceRootId = resourceRootId,
+                        fileSize = detail.size.toLongOrNull(),
+                        sharedResource = sharedResource,
                     )
                     val shouldPersist = metadataMutex.withLock {
                         storageDir.createDirectories()
@@ -570,6 +595,7 @@ class PikPakOfflineDownloadEngine(
                             client.rename(detail.id, targetName)
                         },
                     )
+                    recordLibraryMapping(client, mapping, detail.parentId)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -624,6 +650,311 @@ class PikPakOfflineDownloadEngine(
     private fun metadataDirForCurrentAccount(): SystemPath? {
         val account = credentials.value?.username?.takeIf(String::isNotEmpty) ?: return null
         return metadataStorageDir?.resolve("account-${sha256HexShort(account)}")
+    }
+
+    override suspend fun sync() = libraryMutex.withLock {
+        _libraryState.value = _libraryState.value.copy(
+            status = OfflineDownloadLibraryState.Status.Syncing,
+            errorMessage = null,
+        )
+        try {
+            val creds = credentials.value?.takeIf(PikPakCredentials::isValid)
+                ?: throw OfflineDownloadAuthException("PikPak not configured")
+            val client = clientFor(creds)
+            client.login()
+            val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
+            val local = loadLocalLibraryManifest()
+            val remote = loadCloudLibraryManifest(client, slotId)
+            val recovered = recoverLibraryEntriesFromMappings(client, slotId)
+            val recoveryManifest = OfflineDownloadLibraryManifest(entries = recovered)
+            val merged = mergeOfflineDownloadLibraryManifests(
+                mergeOfflineDownloadLibraryManifests(local, remote, currentTimeMillis()),
+                recoveryManifest,
+                currentTimeMillis(),
+            )
+            saveLocalLibraryManifest(merged)
+            if (merged.entries != remote.entries) {
+                uploadCloudLibraryManifest(client, slotId, merged)
+            }
+
+            val topEntries = client.listFiles(parentId = slotId)
+            val knownRoots = merged.entries.filterNot(OfflineDownloadLibraryEntry::isDeleted)
+                .mapTo(mutableSetOf(), OfflineDownloadLibraryEntry::resourceRootId)
+            val knownSourceKeys = merged.entries.mapTo(mutableSetOf(), OfflineDownloadLibraryEntry::sourceKey)
+            val unmatched = topEntries.filter { entry ->
+                entry.name != LIBRARY_FILE_NAME &&
+                        !isAnimekoMetadataFile(entry.name) &&
+                        !isAnimekoLibrarySubjectFolder(entry.name) &&
+                        entry.id !in knownRoots &&
+                        bucketSourceKey(entry.name) !in knownSourceKeys
+            }.map { entry ->
+                OfflineDownloadUnmatchedResource(entry.id, entry.name, entry.isFolder)
+            }
+            _libraryState.value = OfflineDownloadLibraryState(
+                status = OfflineDownloadLibraryState.Status.Ready,
+                manifest = merged,
+                unmatchedResources = unmatched,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logger.warn(e) { "[pikpak] library sync failed" }
+            _libraryState.value = _libraryState.value.copy(
+                status = OfflineDownloadLibraryState.Status.Failed,
+                errorMessage = e.message,
+            )
+        }
+    }
+
+    override suspend fun resolveCachedEpisode(subjectId: String, episodeId: String): ResolvedMedia? {
+        if (_libraryState.value.status == OfflineDownloadLibraryState.Status.Idle) sync()
+        val entry = _libraryState.value.entries
+            .filter { it.subjectId == subjectId && it.episodeId == episodeId }
+            .maxWithOrNull(
+                compareBy<OfflineDownloadLibraryEntry> { it.preferred }
+                    .thenBy(OfflineDownloadLibraryEntry::updatedAt),
+            )
+            ?: return null
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid) ?: return null
+        val client = clientFor(creds)
+        client.login()
+        val detail = runCatchingCancellable { client.getFile(entry.providerFileId) }.getOrNull()
+        if (detail == null || detail.trashed || detail.id.isEmpty()) {
+            _libraryState.value = _libraryState.value.copy(
+                remoteMissingEntryIds = _libraryState.value.remoteMissingEntryIds + entry.entryId,
+            )
+            return null
+        }
+        _libraryState.value = _libraryState.value.copy(
+            remoteMissingEntryIds = _libraryState.value.remoteMissingEntryIds - entry.entryId,
+        )
+        return buildResolvedMedia(detail).copy(
+            isCloudCacheHit = true,
+            providerRootId = entry.resourceRootId,
+        )
+    }
+
+    override suspend fun deleteEpisode(subjectId: String, episodeId: String) = libraryMutex.withLock {
+        val current = _libraryState.value.manifest
+        val targets = current.entries.filter {
+            !it.isDeleted && it.subjectId == subjectId && it.episodeId == episodeId
+        }
+        if (targets.isEmpty()) return@withLock
+        val remaining = current.entries.filterNot {
+            !it.isDeleted && it.subjectId == subjectId && it.episodeId == episodeId
+        }
+        val rootsStillReferenced = remaining.filterNot(OfflineDownloadLibraryEntry::isDeleted)
+            .mapTo(mutableSetOf(), OfflineDownloadLibraryEntry::resourceRootId)
+        val rootsToDelete = targets.map(OfflineDownloadLibraryEntry::resourceRootId)
+            .filterNot(rootsStillReferenced::contains)
+            .distinct()
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid)
+            ?: throw OfflineDownloadAuthException("PikPak not configured")
+        val client = clientFor(creds)
+        client.login()
+        if (rootsToDelete.isNotEmpty()) client.batchDelete(rootsToDelete)
+        val now = currentTimeMillis()
+        val tombstones = targets.map { it.copy(updatedAt = now, deletedAt = now) }
+        persistLibraryMutation(client, tombstones)
+    }
+
+    override suspend fun deleteUnmatched(providerFileId: String) {
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid)
+            ?: throw OfflineDownloadAuthException("PikPak not configured")
+        val client = clientFor(creds)
+        client.login()
+        client.batchDelete(listOf(providerFileId))
+        sync()
+    }
+
+    override suspend fun recordResolvedResource(entry: OfflineDownloadLibraryEntry) {
+        val creds = credentials.value?.takeIf(PikPakCredentials::isValid)
+            ?: throw OfflineDownloadAuthException("PikPak not configured")
+        val client = clientFor(creds)
+        client.login()
+        val now = currentTimeMillis()
+        val previous = _libraryState.value.entries.filter {
+            it.subjectId == entry.subjectId && it.episodeId == entry.episodeId && it.entryId != entry.entryId
+        }.map { it.copy(preferred = false, updatedAt = now) }
+        persistLibraryMutation(
+            client,
+            previous + entry.copy(preferred = true, updatedAt = now),
+        )
+    }
+
+    override suspend fun rematch(subjectId: String, episodeId: String, preferredEntryId: String) {
+        val selected = _libraryState.value.entries.firstOrNull {
+            it.entryId == preferredEntryId && it.subjectId == subjectId && it.episodeId == episodeId
+        } ?: return
+        recordResolvedResource(selected)
+    }
+
+    private suspend fun recordLibraryMapping(
+        client: PikPakClient,
+        mapping: PikPakFileMapping,
+        observedParentId: String,
+    ) {
+        val cached = mapping.cachedSource ?: return
+        if (cached.sourcePayload.isBlank()) return
+        val now = currentTimeMillis()
+        val rootId = if (mapping.sharedResource) mapping.resourceRootId else mapping.providerFileId
+        val entry = OfflineDownloadLibraryEntry(
+            entryId = "${cached.subjectId}:${cached.episodeId}:${mapping.providerFileId}",
+            subjectId = cached.subjectId,
+            subjectName = mapping.subjectName.orEmpty(),
+            episodeId = cached.episodeId,
+            episodeNumber = mapping.episodeNumber.orEmpty(),
+            episodeTitle = mapping.episodeTitle.orEmpty(),
+            sourceKey = mapping.sourceKey,
+            sourcePayload = cached.sourcePayload,
+            resourceRootId = rootId,
+            providerFileId = mapping.providerFileId,
+            providerFileName = mapping.fileName,
+            fileSize = mapping.fileSize,
+            sharedResource = mapping.sharedResource,
+            preferred = true,
+            createdAt = mapping.createdAt.takeIf { it > 0 } ?: now,
+            updatedAt = now,
+        )
+        val nowPreferred = _libraryState.value.entries.filter {
+            it.subjectId == entry.subjectId && it.episodeId == entry.episodeId && it.entryId != entry.entryId
+        }.map { it.copy(preferred = false, updatedAt = now) }
+        persistLibraryMutation(client, nowPreferred + entry)
+
+        if (!mapping.sharedResource && observedParentId.isNotEmpty()) {
+            val subjectFolder = "${sanitizePikPakName(mapping.subjectName, "动画", 80)}【${cached.subjectId}】"
+            val episodeFolder = "${episodeFolderName(mapping)}【${cached.episodeId}】"
+            val targetId = client.getOrCreateDeepFolderId(
+                parentId = "",
+                path = "$slotFolderName/$subjectFolder/$episodeFolder",
+            )
+            runCatchingCancellable { client.batchMove(listOf(mapping.providerFileId), targetId) }
+                .onFailure { logger.warn(it) { "[pikpak] could not move single episode into library folder" } }
+        }
+    }
+
+    private suspend fun persistLibraryMutation(
+        client: PikPakClient,
+        changedEntries: List<OfflineDownloadLibraryEntry>,
+    ) {
+        val slotId = client.getOrCreateDeepFolderId(parentId = "", path = slotFolderName)
+        val remote = loadCloudLibraryManifest(client, slotId)
+        val local = _libraryState.value.manifest
+        val mutation = OfflineDownloadLibraryManifest(entries = changedEntries)
+        val merged = mergeOfflineDownloadLibraryManifests(
+            mergeOfflineDownloadLibraryManifests(local, remote, currentTimeMillis()),
+            mutation,
+            currentTimeMillis(),
+        )
+        saveLocalLibraryManifest(merged)
+        uploadCloudLibraryManifest(client, slotId, merged)
+        _libraryState.value = _libraryState.value.copy(
+            status = OfflineDownloadLibraryState.Status.Ready,
+            manifest = merged,
+            errorMessage = null,
+        )
+    }
+
+    private fun loadLocalLibraryManifest(): OfflineDownloadLibraryManifest {
+        val file = metadataDirForCurrentAccount()?.resolve(LIBRARY_FILE_NAME)
+            ?: return OfflineDownloadLibraryManifest()
+        if (!file.exists()) return OfflineDownloadLibraryManifest()
+        return runCatching { metadataJson.decodeFromString<OfflineDownloadLibraryManifest>(file.readText()) }
+            .onFailure { logger.warn(it) { "[pikpak] invalid local library manifest" } }
+            .getOrDefault(OfflineDownloadLibraryManifest())
+    }
+
+    private fun saveLocalLibraryManifest(manifest: OfflineDownloadLibraryManifest) {
+        val storageDir = metadataDirForCurrentAccount() ?: return
+        storageDir.createDirectories()
+        storageDir.resolve(LIBRARY_FILE_NAME).writeText(metadataJson.encodeToString(manifest))
+    }
+
+    private suspend fun loadCloudLibraryManifest(
+        client: PikPakClient,
+        slotId: String,
+    ): OfflineDownloadLibraryManifest {
+        val entry = client.listFiles(parentId = slotId)
+            .filter { it.isFile && it.name == LIBRARY_FILE_NAME && !it.trashed }
+            .maxByOrNull { it.modifiedTime.ifEmpty { it.createdTime } }
+            ?: return OfflineDownloadLibraryManifest()
+        return try {
+            val detail = client.getFile(entry.id)
+            val url = detail.downloadUrl ?: detail.webContentLink.takeIf(String::isNotEmpty)
+                ?: return OfflineDownloadLibraryManifest()
+            metadataJson.decodeFromString(sharedHttp.get(url).bodyAsText())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logger.warn(e) { "[pikpak] invalid cloud library manifest; recovering from mappings" }
+            OfflineDownloadLibraryManifest()
+        }
+    }
+
+    private suspend fun uploadCloudLibraryManifest(
+        client: PikPakClient,
+        slotId: String,
+        manifest: OfflineDownloadLibraryManifest,
+    ) {
+        val storageDir = metadataDirForCurrentAccount() ?: return
+        storageDir.createDirectories()
+        val localFile = storageDir.resolve(LIBRARY_FILE_NAME)
+        localFile.writeText(metadataJson.encodeToString(manifest))
+        val existing = client.listFiles(parentId = slotId)
+            .filter { it.isFile && it.name == LIBRARY_FILE_NAME }
+        client.upload(slotId, localFile.path)
+        if (existing.isNotEmpty()) client.batchDelete(existing.map(FileStat::id))
+    }
+
+    private suspend fun recoverLibraryEntriesFromMappings(
+        client: PikPakClient,
+        slotId: String,
+    ): List<OfflineDownloadLibraryEntry> {
+        val mappings = collectAllCloudMappings(client, slotId)
+        val now = currentTimeMillis()
+        return mappings.mapNotNull { mapping ->
+            val cached = mapping.cachedSource ?: return@mapNotNull null
+            OfflineDownloadLibraryEntry(
+                entryId = "${cached.subjectId}:${cached.episodeId}:${mapping.providerFileId}",
+                subjectId = cached.subjectId,
+                subjectName = mapping.subjectName.orEmpty(),
+                episodeId = cached.episodeId,
+                episodeNumber = mapping.episodeNumber.orEmpty(),
+                episodeTitle = mapping.episodeTitle.orEmpty(),
+                sourceKey = mapping.sourceKey,
+                sourcePayload = cached.sourcePayload,
+                resourceRootId = if (mapping.sharedResource) mapping.resourceRootId else mapping.providerFileId,
+                providerFileId = mapping.providerFileId,
+                providerFileName = mapping.fileName,
+                fileSize = mapping.fileSize,
+                sharedResource = mapping.sharedResource,
+                createdAt = mapping.createdAt.takeIf { it > 0 } ?: now,
+                updatedAt = mapping.updatedAt.takeIf { it > 0 } ?: now,
+            )
+        }
+    }
+
+    private suspend fun collectAllCloudMappings(client: PikPakClient, slotId: String): List<PikPakFileMapping> {
+        val pending = ArrayDeque<String>()
+        val visited = mutableSetOf<String>()
+        val mappings = mutableListOf<PikPakFileMapping>()
+        pending.add(slotId)
+        while (pending.isNotEmpty()) {
+            val parent = pending.removeFirst()
+            if (!visited.add(parent)) continue
+            for (entry in client.listFiles(parentId = parent)) {
+                if (entry.trashed || entry.id.isEmpty()) continue
+                if (entry.isFolder) pending.add(entry.id)
+                else if (isAnimekoMetadataFile(entry.name)) loadCloudMapping(client, entry)?.let(mappings::add)
+            }
+        }
+        return mappings.distinctBy { it.providerFileId }
+    }
+
+    private fun episodeFolderName(mapping: PikPakFileMapping): String {
+        val number = sanitizePikPakName(mapping.episodeNumber, "未知集数", 20)
+        val title = sanitizePikPakName(mapping.episodeTitle, "", 60)
+        return if (title.isEmpty()) "第${number}集" else "第${number}集 - $title"
     }
 
     private fun scheduleCleanup(client: PikPakClient, fileId: String?) {
@@ -772,6 +1103,10 @@ internal fun findSourceBuckets(topEntries: List<FileStat>, sourceKey: String): L
 private const val BUCKET_KEY_PREFIX = "【Animeko-"
 private const val BUCKET_KEY_SUFFIX = "】"
 private const val MAPPING_FILE_PREFIX = "Animeko映射-"
+private const val LIBRARY_FILE_NAME = "Animeko缓存索引.json"
+
+internal fun isAnimekoLibrarySubjectFolder(name: String): Boolean =
+    Regex(""".+【\d+】$""").matches(name)
 
 internal fun readableBucketName(
     sourceKey: String,
@@ -914,6 +1249,11 @@ internal data class PikPakFileMapping(
     val episodeNumber: String?,
     val cachedSource: OfflineDownloadCachedSource?,
     val providerFileId: String,
+    val resourceRootId: String = providerFileId,
+    val fileSize: Long? = null,
+    val sharedResource: Boolean = false,
+    val createdAt: Long = 0,
+    val updatedAt: Long = 0,
     val originalFileName: String,
     val fileName: String,
 )
@@ -924,6 +1264,9 @@ internal fun updatedFileMapping(
     providerFileId: String,
     observedFileName: String,
     previous: PikPakFileMapping?,
+    resourceRootId: String = providerFileId,
+    fileSize: Long? = null,
+    sharedResource: Boolean = false,
 ): PikPakFileMapping {
     val originalFileName = previous?.originalFileName ?: observedFileName
     return PikPakFileMapping(
@@ -933,6 +1276,11 @@ internal fun updatedFileMapping(
         episodeNumber = naming.episodeNumber,
         cachedSource = naming.cachedSource,
         providerFileId = providerFileId,
+        resourceRootId = previous?.resourceRootId?.takeIf(String::isNotEmpty) ?: resourceRootId,
+        fileSize = fileSize ?: previous?.fileSize,
+        sharedResource = sharedResource || previous?.sharedResource == true,
+        createdAt = previous?.createdAt?.takeIf { it > 0 } ?: currentTimeMillis(),
+        updatedAt = currentTimeMillis(),
         originalFileName = originalFileName,
         fileName = readableVideoFileName(originalFileName, providerFileId, naming),
     )

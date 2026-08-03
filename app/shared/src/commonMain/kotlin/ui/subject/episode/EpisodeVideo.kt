@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.rounded.DisplaySettings
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PushPin
@@ -217,6 +218,7 @@ internal fun EpisodeVideoImpl(
     sideSheets: @Composable (controller: VideoSideSheetsController<EpisodeVideoSideSheetPage>) -> Unit,
     shareData: MediaShareData,
     onClickCache: () -> Unit,
+    cacheToPikPak: Boolean = false,
     modifier: Modifier = Modifier,
     maintainAspectRatio: Boolean = !expanded,
     isFullscreen: Boolean = expanded,
@@ -283,6 +285,7 @@ internal fun EpisodeVideoImpl(
                                 sheetsController = sheetsController,
                                 shareData = shareData,
                                 onClickCache = onClickCache,
+                                cacheToPikPak = cacheToPikPak,
                                 playerControllerState = playerControllerState,
                                 sidebarVisible = sidebarVisible,
                                 onToggleSidebar = onToggleSidebar,
@@ -603,6 +606,7 @@ private fun EpisodeVideoTopBarActions(
     sheetsController: VideoSideSheetsController<EpisodeVideoSideSheetPage>,
     shareData: MediaShareData,
     onClickCache: () -> Unit,
+    cacheToPikPak: Boolean,
     playerControllerState: PlayerControllerState,
     sidebarVisible: Boolean,
     onToggleSidebar: (isCollapsed: Boolean) -> Unit,
@@ -621,7 +625,7 @@ private fun EpisodeVideoTopBarActions(
     val danmakuSettingsTitleText = stringResource(Lang.subject_episode_danmaku_settings_title)
     val moreOptionsText = stringResource(Lang.subject_episode_more_options)
     val externalLinksText = stringResource(Lang.subject_episode_external_links)
-    val cacheText = stringResource(Lang.subject_episode_cache)
+    val cacheText = if (cacheToPikPak) "缓存至 PikPak" else stringResource(Lang.subject_episode_cache)
     val showPlayerStatsText = stringResource(Lang.video_player_stats_title_show)
     val hidePlayerStatsText = stringResource(Lang.video_player_stats_title_hide)
     val collapseSidebarText = stringResource(Lang.subject_episode_collapse_sidebar)
@@ -709,9 +713,15 @@ private fun EpisodeVideoTopBarActions(
                 text = { Text(cacheText) },
                 onClick = {
                     showMoreDropdown = false
-                    onClickCache()
+                    if (cacheToPikPak) {
+                        sheetsController.navigateTo(EpisodeVideoSideSheetPage.MEDIA_SELECTOR)
+                    } else {
+                        onClickCache()
+                    }
                 },
-                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                leadingIcon = {
+                    Icon(if (cacheToPikPak) Icons.Rounded.CloudDownload else Icons.Rounded.Download, null)
+                },
             )
         }
         ShareEpisodeDropdown(

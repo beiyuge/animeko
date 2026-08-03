@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.CloudCircle
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -73,6 +74,8 @@ import me.him188.ani.app.ui.adaptive.navigation.AniNavigationSuiteDefaults
 import me.him188.ani.app.ui.adaptive.navigation.AniNavigationSuiteLayout
 import me.him188.ani.app.ui.cache.CacheManagementScreen
 import me.him188.ani.app.ui.cache.CacheManagementViewModel
+import me.him188.ani.app.ui.cache.PikPakLibraryScreen
+import me.him188.ani.app.ui.cache.PikPakLibraryViewModel
 import me.him188.ani.app.ui.exploration.ExplorationScreen
 import me.him188.ani.app.ui.foundation.LocalPlatform
 import me.him188.ani.app.ui.foundation.animation.LocalAniMotionScheme
@@ -162,6 +165,7 @@ private fun MainScreenContent(
     val explorationPageViewModel = viewModel { ExplorationPageViewModel() }
     val userCollectionsViewModel = viewModel<UserCollectionsViewModel> { UserCollectionsViewModel() }
     val cacheManagementViewModel = viewModel { CacheManagementViewModel() }
+    val pikPakLibraryViewModel = viewModel { PikPakLibraryViewModel() }
 
     var showAccountSettingsPopup: Boolean by remember { mutableStateOf(false) }
     val profileViewModel = viewModel { ProfileViewModel() }
@@ -182,6 +186,7 @@ private fun MainScreenContent(
             explorationPageViewModel = explorationPageViewModel,
             userCollectionsViewModel = userCollectionsViewModel,
             cacheManagementViewModel = cacheManagementViewModel,
+            pikPakLibraryViewModel = pikPakLibraryViewModel,
             modifier = modifier,
             navigationLayoutType = navigationLayoutType,
         )
@@ -222,6 +227,7 @@ private fun MainScreenNavigationLayout(
     explorationPageViewModel: ExplorationPageViewModel,
     userCollectionsViewModel: UserCollectionsViewModel,
     cacheManagementViewModel: CacheManagementViewModel,
+    pikPakLibraryViewModel: PikPakLibraryViewModel,
     modifier: Modifier = Modifier,
     navigationLayoutType: NavigationSuiteType = AniNavigationSuiteDefaults.calculateLayoutType(
         currentWindowAdaptiveInfo1(),
@@ -230,6 +236,7 @@ private fun MainScreenNavigationLayout(
     val scope = rememberCoroutineScope()
     val navigatorState = rememberUpdatedState(LocalNavigator.current)
     val navigator by navigatorState
+    val pikPakEnabled by pikPakLibraryViewModel.enabled.collectAsStateWithLifecycle()
 
     AniNavigationSuiteLayout(
         navigationSuite = {
@@ -293,8 +300,25 @@ private fun MainScreenNavigationLayout(
                                 }
                             }
                         },
-                        icon = { Icon(entry.getIcon(), null) },
-                        label = { Text(text = entry.getText()) },
+                        icon = {
+                            Icon(
+                                if (entry == MainScreenPage.CacheManagement && pikPakEnabled) {
+                                    Icons.Rounded.CloudCircle
+                                } else {
+                                    entry.getIcon()
+                                },
+                                null,
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = if (entry == MainScreenPage.CacheManagement && pikPakEnabled) {
+                                    "PikPak"
+                                } else {
+                                    entry.getText()
+                                },
+                            )
+                        },
                     )
                 }
             }
@@ -362,16 +386,25 @@ private fun MainScreenNavigationLayout(
                     }
 
                     MainScreenPage.CacheManagement -> {
-                        CacheManagementScreen(
-                            cacheManagementViewModel,
-                            selfInfo = selfInfo,
-                            onPlay = { navigator.navigateEpisodeDetails(it.subjectId, it.episodeId) },
-                            onNavigateCacheDetail = { navigator.navigateCacheDetails(it) },
-                            onClickLogin = onLogin,
-                            modifier = Modifier.fillMaxSize(),
-                            navigationIcon = { },
-                            windowInsets = pageWindowInsets,
-                        )
+                        if (pikPakEnabled) {
+                            PikPakLibraryScreen(
+                                pikPakLibraryViewModel,
+                                onPlay = navigator::navigateEpisodeDetails,
+                                modifier = Modifier.fillMaxSize(),
+                                windowInsets = pageWindowInsets,
+                            )
+                        } else {
+                            CacheManagementScreen(
+                                cacheManagementViewModel,
+                                selfInfo = selfInfo,
+                                onPlay = { navigator.navigateEpisodeDetails(it.subjectId, it.episodeId) },
+                                onNavigateCacheDetail = { navigator.navigateCacheDetails(it) },
+                                onClickLogin = onLogin,
+                                modifier = Modifier.fillMaxSize(),
+                                navigationIcon = { },
+                                windowInsets = pageWindowInsets,
+                            )
+                        }
                     }
                 }
             }

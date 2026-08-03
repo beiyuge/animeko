@@ -10,10 +10,16 @@
 package me.him188.ani.app.domain.player.extension
 
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.episode.EpisodeSession
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.MediaSelectorAutoSelectUseCase
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineDownloadLibraryState
 import org.koin.core.Koin
 
 /**
@@ -26,14 +32,35 @@ class AutoSelectExtension(
     koin: Koin
 ) : PlayerExtension("AutoSelect") {
     private val mediaSelectorAutoSelectUseCase: MediaSelectorAutoSelectUseCase by koin.inject()
+    private val settingsRepository = koin.getOrNull<SettingsRepository>()
+    private val offlineDownloadLibrary = koin.getOrNull<OfflineDownloadLibrary>()
 
     override fun onStart(
         episodeSession: EpisodeSession,
         backgroundTaskScope: ExtensionBackgroundTaskScope
     ) {
         backgroundTaskScope.launch("AutoSelect") {
-            context.sessionFlow.flatMapLatest { it.fetchSelectFlow }.collectLatest { fetchSelect ->
+            context.sessionFlow.flatMapLatest { session ->
+                combine(
+                    session.fetchSelectFlow,
+                    session.infoBundleFlow.filterNotNull(),
+                    ::Pair,
+                )
+            }.collectLatest { (fetchSelect, info) ->
                 if (fetchSelect == null) return@collectLatest
+                val settings = settingsRepository
+                val library = offlineDownloadLibrary
+                if (settings != null && library != null && settings.pikpakConfig.flow.first().enabled) {
+                    if (library.libraryState.value.status == OfflineDownloadLibraryState.Status.Idle) {
+                        library.sync()
+                    }
+                    val subjectEntries = library.libraryState.value.entries
+                        .filter { it.subjectId == info.subjectId.toString() }
+                    val targetCached = subjectEntries.any { it.episodeId == info.episodeId.toString() }
+                    // Once a title has become a PikPak library, missing episodes are user-driven:
+                    // the page distinguishes middle/tail/not-aired and opens one explicit selector.
+                    if (subjectEntries.isNotEmpty() && !targetCached) return@collectLatest
+                }
                 mediaSelectorAutoSelectUseCase(fetchSelect.mediaFetchSession, fetchSelect.mediaSelector)
             }
         }

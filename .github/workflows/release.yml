@@ -1465,7 +1465,7 @@ jobs:
       name: 'Generate QR code for APK (GitHub)'
       uses: 'snow-actions/qrcode@v1.0.0'
       with:
-        text: 'https://github.com/open-ani/animeko/releases/download/${{ steps.step-1.outputs.tag }}/ani-${{ steps.step-2.outputs.substring }}-universal.apk'
+        text: 'https://github.com/beiyuge/animeko/releases/download/${{ steps.step-1.outputs.tag }}/ani-${{ steps.step-2.outputs.substring }}-universal.apk'
         path: 'apk-qrcode-github.png'
     - id: 'step-54'
       name: 'Generate QR code for APK (Cloudflare)'

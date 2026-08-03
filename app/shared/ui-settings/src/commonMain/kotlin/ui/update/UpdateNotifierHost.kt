@@ -64,6 +64,7 @@ fun BoxScope.UpdateNotifier(
     val uriHandler = LocalUriHandler.current
 
     val presentation by viewModel.presentationFlow.collectAsStateWithLifecycle()
+    val upstreamUpdate by viewModel.upstreamUpdate.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     UpdateNotifier(
@@ -85,6 +86,20 @@ fun BoxScope.UpdateNotifier(
         snackbarHostState = snackbarHostState,
         layoutKind = layoutKind,
     )
+
+    LaunchedEffect(upstreamUpdate?.tag) {
+        val notice = upstreamUpdate ?: return@LaunchedEffect
+        viewModel.markUpstreamNotified(notice.tag)
+        val result = snackbarHostState.showSnackbar(
+            message = "上游 Animeko 已更新至 ${notice.version}",
+            actionLabel = "查看",
+            withDismissAction = true,
+            duration = SnackbarDuration.Long,
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            uriHandler.openUri(notice.detailsUrl)
+        }
+    }
 
     presentation.installationFailure?.let {
         FailedToInstallDialog(
@@ -151,8 +166,7 @@ fun BoxScope.UpdateNotifier(
         } else {
             // 提示有新版本
 
-            val onDetailsClick =
-                { uriHandler.openUri("https://github.com/open-ani/animeko/releases/tag/v${newVersion.name}") }
+            val onDetailsClick = { uriHandler.openUri(newVersion.detailsUrl) }
 
             when (layoutKind) {
                 UpdateNotifierLayoutKind.POPUP -> {

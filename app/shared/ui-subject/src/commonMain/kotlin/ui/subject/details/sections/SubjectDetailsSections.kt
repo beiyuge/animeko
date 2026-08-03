@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.Tag
 import me.him188.ani.app.ui.foundation.OutlinedTag
+import me.him188.ani.app.ui.subject.collection.progress.LocalPikPakEnabled
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.subject_details_air_date
 import me.him188.ani.app.ui.lang.subject_details_air_date_format
@@ -120,20 +122,23 @@ fun SectionHeaderCacheButton(
     modifier: Modifier = Modifier,
     showLabel: Boolean = true,
 ) {
+    val pikPakEnabled = LocalPikPakEnabled.current
+    val label = if (pikPakEnabled) "缓存至 PikPak" else stringResource(Lang.subject_details_manage_cache)
+    val icon = if (pikPakEnabled) Icons.Rounded.CloudDownload else Icons.Rounded.Download
     if (showLabel) {
         TextButton(onClick, modifier) {
             Icon(
-                Icons.Rounded.Download,
+                icon,
                 contentDescription = null,
                 Modifier.size(18.dp),
             )
-            Text(stringResource(Lang.subject_details_manage_cache), Modifier.padding(start = 4.dp))
+            Text(label, Modifier.padding(start = 4.dp))
         }
     } else {
         IconButton(onClick, modifier) {
             Icon(
-                Icons.Rounded.Download,
-                contentDescription = stringResource(Lang.subject_details_manage_cache),
+                icon,
+                contentDescription = label,
                 tint = MaterialTheme.colorScheme.primary,
             )
         }

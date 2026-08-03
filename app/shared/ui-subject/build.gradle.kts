@@ -29,6 +29,8 @@ kotlin {
         api(projects.app.shared.uiComment)
         implementation(libs.compose.components.resources)
         implementation(projects.app.shared.placeholder)
+        implementation(projects.app.shared.appData)
+        implementation(projects.torrent.pikpak)
     }
     sourceSets.commonTest.dependencies {
         implementation(projects.utils.uiTesting)

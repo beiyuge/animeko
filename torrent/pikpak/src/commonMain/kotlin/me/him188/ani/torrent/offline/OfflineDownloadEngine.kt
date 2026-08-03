@@ -142,6 +142,8 @@ data class ResolvedMedia(
      * of server-side file ids.
      */
     val providerFileId: String? = null,
+    /** Root provider object containing this resource; shared by season-pack episode files. */
+    val providerRootId: String? = null,
 )
 
 /**

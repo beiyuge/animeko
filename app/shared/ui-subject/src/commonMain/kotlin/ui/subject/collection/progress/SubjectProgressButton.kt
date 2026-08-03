@@ -16,10 +16,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import me.him188.ani.app.ui.subject.SubjectProgressState
 import me.him188.ani.app.ui.subject.rememberSubjectStatusStrings
 
+val LocalPikPakCachedEpisodeIds = staticCompositionLocalOf<Set<Int>> { emptySet() }
+val LocalPikPakEnabled = staticCompositionLocalOf { false }
 
 /**
  * 显示条目的当前观看进度或推荐观看下一集.
@@ -34,14 +37,16 @@ fun SubjectProgressButton(
 ) {
     val requiredWidth = Modifier.requiredWidth(IntrinsicSize.Max)
     val strings = rememberSubjectStatusStrings()
+    val playThroughPikPak = state.episodeIdToPlay?.let { it in LocalPikPakCachedEpisodeIds.current } == true
+    val buttonText = if (playThroughPikPak) "通过 PikPak 播放" else state.buttonText(strings)
     Crossfade(state.buttonIsPrimary) { isPrimary ->
         if (isPrimary) {
             Button(onClick = onPlay, modifier) {
-                Text(state.buttonText(strings), requiredWidth, softWrap = false)
+                Text(buttonText, requiredWidth, softWrap = false)
             }
         } else {
             FilledTonalButton(onClick = onPlay, modifier) {
-                Text(state.buttonText(strings), requiredWidth, softWrap = false)
+                Text(buttonText, requiredWidth, softWrap = false)
             }
         }
     }

@@ -58,6 +58,7 @@ import me.him188.ani.app.platform.files
 import me.him188.ani.app.tools.update.DesktopUpdateInstaller
 import me.him188.ani.app.tools.update.UpdateInstaller
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.torrent.pikpak.PikPakCredentials
 import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
 import me.him188.ani.torrent.pikpak.PikPakSessionStoreAdapter
@@ -167,7 +168,7 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
     single<CaptchaBrowserFactory> { DesktopCaptchaBrowserFactory() }
     single<ImageCaptchaRecognizer> { DesktopOnnxImageCaptchaRecognizer() }
     single<HlsPlaybackPreparer> { PlatformHlsPlaybackPreparer(get()) }
-    single<OfflineDownloadEngine> {
+    single<PikPakOfflineDownloadEngine> {
         val settings = get<SettingsRepository>()
         val configState = settings.pikpakConfig.flow
             .stateIn(scope, SharingStarted.Eagerly, initialValue = PikPakConfig.Default)
@@ -205,9 +206,10 @@ fun getDesktopModules(getContext: () -> DesktopContext, scope: CoroutineScope) =
             scope = scope,
             sessionStore = sessionStore,
             metadataStorageDir = getContext().files.dataDir.resolve("pikpak-metadata"),
-            slotQueueLength = { configState.value.slotQueueLength },
         )
     }
+    single<OfflineDownloadEngine> { get<PikPakOfflineDownloadEngine>() }
+    single<OfflineDownloadLibrary> { get<PikPakOfflineDownloadEngine>() }
     factory<MediaResolver> {
         val torrentResolvers = get<TorrentManager>().engines.map {
             TorrentMediaResolver(it, get(), get<LocalTorrentAccessPolicy>())

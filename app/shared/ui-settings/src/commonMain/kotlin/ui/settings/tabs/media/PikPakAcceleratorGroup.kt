@@ -160,27 +160,6 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
                     },
                 )
 
-                val queueLength = config.slotQueueLength.coerceIn(1, PikPakConfig.SLOT_QUEUE_UNLIMITED)
-                SliderItem(
-                    value = queueLength.toFloat(),
-                    onValueChange = { raw ->
-                        val rounded = raw.toInt().coerceIn(1, PikPakConfig.SLOT_QUEUE_UNLIMITED)
-                        if (rounded != config.slotQueueLength) {
-                            state.update(config.copy(slotQueueLength = rounded))
-                        }
-                    },
-                    title = { Text(stringResource(Lang.settings_pikpak_queue_title)) },
-                    description = { Text(stringResource(Lang.settings_pikpak_queue_description)) },
-                    valueRange = 1f..PikPakConfig.SLOT_QUEUE_UNLIMITED.toFloat(),
-                    steps = PikPakConfig.SLOT_QUEUE_UNLIMITED - 2,
-                    valueLabel = {
-                        Text(
-                            if (queueLength >= PikPakConfig.SLOT_QUEUE_UNLIMITED) stringResource(Lang.settings_pikpak_queue_unlimited)
-                            else queueLength.toString(),
-                        )
-                    },
-                )
-
                 TextItem(
                     title = { Text(stringResource(Lang.settings_pikpak_test_connection)) },
                     action = {

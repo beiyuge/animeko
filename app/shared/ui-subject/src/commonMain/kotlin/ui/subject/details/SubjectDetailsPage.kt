@@ -150,6 +150,8 @@ import me.him188.ani.app.ui.search.LoadErrorCard
 import me.him188.ani.app.ui.subject.AiringLabelState
 import me.him188.ani.app.ui.subject.SubjectProgressState
 import me.him188.ani.app.ui.subject.collection.components.EditableSubjectCollectionTypeButton
+import me.him188.ani.app.ui.subject.collection.progress.LocalPikPakCachedEpisodeIds
+import me.him188.ani.app.ui.subject.collection.progress.LocalPikPakEnabled
 import me.him188.ani.app.ui.subject.details.components.CollectionData
 import me.him188.ani.app.ui.subject.details.components.SeasonTag
 import me.him188.ani.app.ui.subject.details.components.SelectEpisodeButtons
@@ -192,6 +194,8 @@ fun SubjectDetailsScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle(null)
     val selfInfo by vm.authState.collectAsStateWithLifecycle()
+    val pikPakCachedEpisodeIds by vm.pikPakCachedEpisodeIds.collectAsStateWithLifecycle()
+    val pikPakEnabled by vm.pikPakEnabled.collectAsStateWithLifecycle()
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
 
@@ -212,6 +216,8 @@ fun SubjectDetailsScreen(
                 }
             }
         },
+        pikPakCachedEpisodeIds,
+        pikPakEnabled,
         modifier,
         showTopBar,
         showBlurredBackground,
@@ -228,6 +234,8 @@ fun SubjectDetailsScreen(
     onLoadErrorRetry: () -> Unit,
     onClickTag: (Tag) -> Unit,
     onEpisodeCollectionUpdate: (SetEpisodeCollectionTypeRequest) -> Unit,
+    pikPakCachedEpisodeIds: Set<Int> = emptySet(),
+    pikPakEnabled: Boolean = false,
     modifier: Modifier = Modifier,
     showTopBar: Boolean = true,
     showBlurredBackground: Boolean = true,
@@ -242,45 +250,50 @@ fun SubjectDetailsScreen(
 
     // 断点必须按本页面实际可用宽度决定, 不能按窗口宽度:
     // 本页面会内嵌于播放页 ModalBottomSheet (最大 640dp) 与搜索页 list-detail 详情栏.
-    BoxWithConstraints(modifier) {
-        val layoutParams = SubjectDetailsLayoutParams.calculate(maxWidth)
-        when (state) {
-            null, is SubjectDetailsUIState.Placeholder -> PlaceholderSubjectDetailsPage(
-                state?.subjectInfo,
-                layoutParams,
-                Modifier,
-                showTopBar,
-                windowInsets,
-                navigationIcon,
-                onClickOpenExternal,
-            )
+    CompositionLocalProvider(
+        LocalPikPakCachedEpisodeIds provides pikPakCachedEpisodeIds,
+        LocalPikPakEnabled provides pikPakEnabled,
+    ) {
+        BoxWithConstraints(modifier) {
+            val layoutParams = SubjectDetailsLayoutParams.calculate(maxWidth)
+            when (state) {
+                null, is SubjectDetailsUIState.Placeholder -> PlaceholderSubjectDetailsPage(
+                    state?.subjectInfo,
+                    layoutParams,
+                    Modifier,
+                    showTopBar,
+                    windowInsets,
+                    navigationIcon,
+                    onClickOpenExternal,
+                )
 
-            is SubjectDetailsUIState.Ok -> SubjectDetailsPage(
-                state.value,
-                selfInfo,
-                layoutParams,
-                onPlay = onPlay,
-                onClickLogin = { navigator.navigateEmailLoginStart() },
-                onClickTag,
-                onEpisodeCollectionUpdate = onEpisodeCollectionUpdate,
-                Modifier,
-                showTopBar,
-                showBlurredBackground,
-                windowInsets,
-                navigationIcon,
-                onClickOpenExternal,
-            )
+                is SubjectDetailsUIState.Ok -> SubjectDetailsPage(
+                    state.value,
+                    selfInfo,
+                    layoutParams,
+                    onPlay = onPlay,
+                    onClickLogin = { navigator.navigateEmailLoginStart() },
+                    onClickTag,
+                    onEpisodeCollectionUpdate = onEpisodeCollectionUpdate,
+                    Modifier,
+                    showTopBar,
+                    showBlurredBackground,
+                    windowInsets,
+                    navigationIcon,
+                    onClickOpenExternal,
+                )
 
-            is SubjectDetailsUIState.Err -> ErrorSubjectDetailsPage(
-                state.placeholder,
-                error = state.error,
-                onRetry = onLoadErrorRetry,
-                Modifier,
-                showTopBar,
-                windowInsets,
-                navigationIcon,
-                onClickOpenExternal,
-            )
+                is SubjectDetailsUIState.Err -> ErrorSubjectDetailsPage(
+                    state.placeholder,
+                    error = state.error,
+                    onRetry = onLoadErrorRetry,
+                    Modifier,
+                    showTopBar,
+                    windowInsets,
+                    navigationIcon,
+                    onClickOpenExternal,
+                )
+            }
         }
     }
 }

@@ -42,6 +42,7 @@ import me.him188.ani.app.domain.media.resolver.MediaResolver
 import me.him188.ani.app.domain.media.resolver.OfflineDownloadMediaResolver
 import me.him188.ani.app.domain.media.resolver.TorrentMediaResolver
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.torrent.pikpak.PikPakCredentials
 import me.him188.ani.torrent.pikpak.PikPakOfflineDownloadEngine
@@ -193,7 +194,7 @@ fun getAndroidModules(
         MediampPlayerFactoryLoader.first()
     }
 
-    single<OfflineDownloadEngine> {
+    single<PikPakOfflineDownloadEngine> {
         val settings = get<SettingsRepository>()
         val configState = settings.pikpakConfig.flow
             .stateIn(coroutineScope, SharingStarted.Eagerly, initialValue = PikPakConfig.Default)
@@ -228,9 +229,10 @@ fun getAndroidModules(
             scope = coroutineScope,
             sessionStore = sessionStore,
             metadataStorageDir = androidContext().files.dataDir.resolve("pikpak-metadata"),
-            slotQueueLength = { configState.value.slotQueueLength },
         )
     }
+    single<OfflineDownloadEngine> { get<PikPakOfflineDownloadEngine>() }
+    single<OfflineDownloadLibrary> { get<PikPakOfflineDownloadEngine>() }
     factory<MediaResolver> {
         val torrentResolvers = get<TorrentManager>().engines.map {
             TorrentMediaResolver(it, get(), get<LocalTorrentAccessPolicy>())

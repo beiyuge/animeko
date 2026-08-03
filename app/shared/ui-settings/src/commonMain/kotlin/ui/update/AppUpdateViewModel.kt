@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.repository.RepositoryNetworkException
 import me.him188.ani.app.data.repository.user.SettingsRepository
@@ -68,6 +69,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
      * 最新的版本. 当 [checked] 为 `true` 时, `null` 表示没有新版本. 否则表示还没有检查过.
      */
     private val latestVersionFlow = MutableStateFlow<NewVersion?>(null)
+    private val upstreamUpdateFlow = MutableStateFlow<UpstreamUpdateNotice?>(null)
     private val lastCheckTime: MutableStateFlow<Long> = MutableStateFlow(0L)
 
     /**
@@ -129,6 +131,7 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
     )
 
     val isChecking get() = autoCheckTasker.isRunning.value
+    val upstreamUpdate = upstreamUpdateFlow
     private val downloadTasker = MonoTasker(backgroundScope)
 
     // 一小时内只会检查一次
@@ -161,7 +164,12 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
                 }
                 logger.info { "Checking latest version, updateSettings=${updateSettings}" }
 
-                updateChecker.checkLatestVersion(updateSettings.releaseClass)
+                val result = updateChecker.checkUpdates(
+                    releaseClass = updateSettings.releaseClass,
+                    lastNotifiedUpstreamTag = updateSettings.lastNotifiedUpstreamTag,
+                )
+                upstreamUpdateFlow.value = result.upstream
+                result.fork
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -177,6 +185,17 @@ class AppUpdateViewModel : AbstractViewModel(), KoinComponent {
             if (ver != null && updateSettings.autoDownloadUpdate) {
                 logger.info { "autoDownloadUpdate is true, starting download" }
                 startDownload(ver, uriHandler)
+            }
+        }
+    }
+
+    fun markUpstreamNotified(tag: String) {
+        if (upstreamUpdateFlow.value?.tag == tag) {
+            upstreamUpdateFlow.value = null
+        }
+        backgroundScope.launch {
+            settingsRepository.updateSettings.update {
+                if (lastNotifiedUpstreamTag == tag) this else copy(lastNotifiedUpstreamTag = tag)
             }
         }
     }
@@ -300,6 +319,7 @@ class NewVersion(
      */
     val downloadUrlAlternatives: List<String>,
     val publishedAt: String,
+    val detailsUrl: String = "https://github.com/beiyuge/animeko/releases/tag/$name",
 ) {
     val majorChanges = changelogs.asSequence().flatMap { changelog ->
         changelog.changes.lineSequence()
@@ -307,6 +327,13 @@ class NewVersion(
             .map { it.removePrefix("- ").removePrefix("* ") }
     }.take(4).toList()
 }
+
+@Immutable
+data class UpstreamUpdateNotice(
+    val tag: String,
+    val version: String,
+    val detailsUrl: String,
+)
 
 @Immutable
 class Changelog(

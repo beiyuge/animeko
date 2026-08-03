@@ -568,6 +568,8 @@ private fun EpisodeScreenTabletVeryWide(
                                     },
                                     onRetryPikPak = vm::retryPikPakPlayback,
                                     onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
+                                    pikPakAvailability = vm.pikPakEpisodeAvailability.collectAsStateWithLifecycle().value,
+                                    onRefreshPikPakAvailability = vm::refreshPikPakAvailability,
                                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                                 )
                             }
@@ -738,6 +740,8 @@ private fun EpisodeScreenContentPhone(
                     },
                     onRetryPikPak = vm::retryPikPakPlayback,
                     onUseAnitorrentOnce = vm::useAnitorrentForCurrentPlayback,
+                    pikPakAvailability = vm.pikPakEpisodeAvailability.collectAsStateWithLifecycle().value,
+                    onRefreshPikPakAvailability = vm::refreshPikPakAvailability,
                     modifier = Modifier.fillMaxSize(),
                     danmakuListState = vm.danmakuListState.collectAsStateWithLifecycle().value,
                 )
@@ -932,6 +936,7 @@ private fun EpisodeVideo(
         null
     }
     val scope = rememberCoroutineScope()
+    val pikPakEnabled by vm.pikPakEnabled.collectAsStateWithLifecycle()
 
     // 必须在 UI 里, 跟随 context 变化. 否则 #958
     val platformComponents by remember {
@@ -1127,6 +1132,7 @@ private fun EpisodeVideo(
         },
         shareData = page.shareData,
         onClickCache = { navigator.navigateSubjectCaches(vm.subjectId) },
+        cacheToPikPak = pikPakEnabled,
         modifier = modifier
             .fillMaxWidth().background(Color.Black)
             .then(if (expanded) Modifier.fillMaxSize() else Modifier.statusBarsPadding()),

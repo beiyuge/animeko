@@ -10,7 +10,12 @@
 package me.him188.ani.app.ui.subject.details
 
 import androidx.compose.runtime.Stable
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import me.him188.ani.app.data.models.subject.SubjectInfo
+import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.app.domain.episode.SetEpisodeCollectionTypeUseCase
 import me.him188.ani.app.ui.foundation.AbstractViewModel
@@ -18,6 +23,7 @@ import me.him188.ani.app.ui.rating.RateRequest
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateLoader
 import me.him188.ani.app.ui.user.SelfInfoStateProducer
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -28,11 +34,25 @@ class SubjectDetailsViewModel(
 ) : AbstractViewModel(), KoinComponent {
     private val factory: SubjectDetailsStateFactory by inject()
     val setEpisodeCollectionType: SetEpisodeCollectionTypeUseCase by inject()
+    private val settingsRepository: SettingsRepository by inject()
+    private val offlineDownloadLibrary: OfflineDownloadLibrary by inject()
 
     private val stateLoader = SubjectDetailsStateLoader(factory, backgroundScope)
 
     val state get() = stateLoader.state
     val authState = SelfInfoStateProducer(koin = getKoin()).flow
+    val pikPakEnabled = settingsRepository.pikpakConfig.flow.map { it.enabled }
+        .stateIn(backgroundScope, SharingStarted.WhileSubscribed(5_000), false)
+    val pikPakCachedEpisodeIds = combine(
+        settingsRepository.pikpakConfig.flow,
+        offlineDownloadLibrary.libraryState,
+    ) { config, library ->
+        if (!config.enabled) emptySet() else library.entries
+            .asSequence()
+            .filter { it.subjectId == subjectId.toString() }
+            .mapNotNull { it.episodeId.toIntOrNull() }
+            .toSet()
+    }.stateIn(backgroundScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     fun reload() {
         stateLoader.reload(subjectId, placeholder)

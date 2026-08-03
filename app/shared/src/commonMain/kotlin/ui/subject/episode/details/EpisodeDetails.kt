@@ -98,6 +98,7 @@ import me.him188.ani.app.domain.media.cache.EpisodeCacheStatus
 import me.him188.ani.app.domain.player.VideoLoadingState
 import me.him188.ani.app.domain.media.resolver.PikPakPlaybackState
 import me.him188.ani.torrent.offline.OfflineDownloadProgress
+import me.him188.ani.torrent.offline.OfflineEpisodeAvailability
 import me.him188.ani.app.navigation.LocalNavigator
 import me.him188.ani.app.navigation.SubjectDetailPlaceholder
 import me.him188.ani.app.ui.foundation.ProvideCompositionLocalsForPreview
@@ -239,6 +240,8 @@ fun EpisodeDetails(
     onRetryLoad: () -> Unit,
     onRetryPikPak: () -> Unit = {},
     onUseAnitorrentOnce: (String) -> Unit = {},
+    pikPakAvailability: OfflineEpisodeAvailability? = null,
+    onRefreshPikPakAvailability: () -> Unit = {},
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
     danmakuListState: DanmakuListState? = null,
@@ -287,6 +290,7 @@ fun EpisodeDetails(
     val subjectRecommendations by remember(state) { state.recommendations }
     val videoStatistics by videoStatisticsFlow.collectAsStateWithLifecycle(VideoStatistics.Placeholder)
     val atLeastMedium = currentWindowAdaptiveInfo1().isWidthAtLeastMedium
+    var showMediaSelector by rememberSaveable { mutableStateOf(false) }
 
     EditableSubjectCollectionTypeDialogsHost(editableSubjectCollectionTypeState)
 
@@ -376,7 +380,6 @@ fun EpisodeDetails(
             }
         },*/
         mediaSelectorItem = { innerPadding ->
-            var showMediaSelector by rememberSaveable { mutableStateOf(false) }
             if (showMediaSelector) {
                 val windowAdaptiveInfo = currentWindowAdaptiveInfo1()
                 val (viewKind, onViewKindChange) = rememberSaveable { mutableStateOf(initialMediaSelectorViewKind) }
@@ -473,27 +476,43 @@ fun EpisodeDetails(
                 }
             }
 
-            if (atLeastMedium) {
-                MediaSelectorSummaryCard(
-                    mediaSelectorSummary,
-                    onClickManualSelect = { showMediaSelector = true },
-                    Modifier.fillMaxWidth().padding(innerPadding),
-                    isHdr = videoStatistics.isHdr,
-                )
-            } else {
-                MediaSelectorSummaryBanner(
-                    mediaSelectorSummary,
-                    onClickSwitchSource = { showMediaSelector = true },
-                    Modifier.fillMaxWidth().padding(innerPadding),
-                    isHdr = videoStatistics.isHdr,
-                )
+            if (videoStatistics.pikPakPlaybackState.status is PikPakPlaybackState.Status.Idle) {
+                if (atLeastMedium) {
+                    MediaSelectorSummaryCard(
+                        mediaSelectorSummary,
+                        onClickManualSelect = { showMediaSelector = true },
+                        Modifier.fillMaxWidth().padding(innerPadding),
+                        isHdr = videoStatistics.isHdr,
+                    )
+                } else {
+                    MediaSelectorSummaryBanner(
+                        mediaSelectorSummary,
+                        onClickSwitchSource = { showMediaSelector = true },
+                        Modifier.fillMaxWidth().padding(innerPadding),
+                        isHdr = videoStatistics.isHdr,
+                    )
+                }
             }
         },
         playbackSourceStatus = {
+            if (videoStatistics.pikPakPlaybackState.status is PikPakPlaybackState.Status.Idle) {
+                PikPakEpisodeAvailabilityStatus(
+                    pikPakAvailability,
+                    onSelectResource = { showMediaSelector = true },
+                    onRefresh = {
+                        onRefreshPikPakAvailability()
+                        showMediaSelector = true
+                    },
+                )
+            }
             PikPakPlaybackStatus(
                 state = videoStatistics.pikPakPlaybackState,
                 onRetry = onRetryPikPak,
                 onUseAnitorrentOnce = onUseAnitorrentOnce,
+                onRematch = {
+                    onRefreshMediaSources()
+                    showMediaSelector = true
+                },
             )
         },
         danmakuStatisticsSummary = {
@@ -706,6 +725,48 @@ fun EpisodeDetails(
 }
 
 @Composable
+internal fun PikPakEpisodeAvailabilityStatus(
+    availability: OfflineEpisodeAvailability?,
+    onSelectResource: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    if (availability == null || availability == OfflineEpisodeAvailability.Cached ||
+        availability == OfflineEpisodeAvailability.NoPikPakCache
+    ) return
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().testTag("PikPakEpisodeAvailability"),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                when (availability) {
+                    OfflineEpisodeAvailability.MiddleGap -> "PikPak 缓存中间缺少这一集"
+                    OfflineEpisodeAvailability.TrailingGap -> "PikPak 缓存尚未更新到这一集"
+                    OfflineEpisodeAvailability.NotAired -> "该集尚未开播或 AniAPI 暂未更新"
+                    OfflineEpisodeAvailability.RemoteMissing -> "PikPak 云端资源已失效"
+                    else -> ""
+                },
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            when (availability) {
+                OfflineEpisodeAvailability.MiddleGap,
+                OfflineEpisodeAvailability.RemoteMissing -> OutlinedButton(onClick = onSelectResource) {
+                    Text("选择单集资源")
+                }
+                OfflineEpisodeAvailability.TrailingGap -> OutlinedButton(onClick = onRefresh) { Text("更新") }
+                else -> Unit
+            }
+        }
+    }
+}
+
+@Composable
 private fun DanmakuTimeShiftDialog(
     serviceName: String,
     currentShiftMillis: Long,
@@ -810,6 +871,7 @@ internal fun PikPakPlaybackStatus(
     state: PikPakPlaybackState,
     onRetry: () -> Unit,
     onUseAnitorrentOnce: (String) -> Unit,
+    onRematch: () -> Unit = {},
 ) {
     if (state.status is PikPakPlaybackState.Status.Idle) return
 
@@ -874,6 +936,9 @@ internal fun PikPakPlaybackStatus(
                         ),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    OutlinedButton(onClick = onRematch) {
+                        Text("重新匹配")
+                    }
                 }
 
                 is PikPakPlaybackState.Status.Failed -> {

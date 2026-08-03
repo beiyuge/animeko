@@ -18,6 +18,7 @@ import kotlinx.io.IOException
 import me.him188.ani.app.data.persistent.DataStoreJson
 import me.him188.ani.app.domain.media.player.data.MediaDataProvider
 import me.him188.ani.app.domain.torrent.LocalTorrentAccessPolicy
+import me.him188.ani.datasources.api.CachedMedia
 import me.him188.ani.datasources.api.DefaultMedia
 import me.him188.ani.datasources.api.Media
 import me.him188.ani.datasources.api.unwrapCached
@@ -25,7 +26,9 @@ import me.him188.ani.datasources.api.topic.ResourceLocation
 import me.him188.ani.torrent.offline.OfflineDownloadAuthException
 import me.him188.ani.torrent.offline.OfflineDownloadCachedSource
 import me.him188.ani.torrent.offline.OfflineDownloadEngine
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
 import me.him188.ani.torrent.offline.OfflineDownloadNaming
+import me.him188.ani.torrent.offline.ResolvedMedia
 import me.him188.ani.torrent.offline.OfflineDownloadRejectedException
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
@@ -76,6 +79,28 @@ class OfflineDownloadMediaResolver(
                 playbackCoordinator.localFallbackStarted(media.mediaId)
                 return fb.resolve(media, episode)
             }
+        }
+        val subjectId = episode.subjectId?.toString()
+        val episodeId = episode.episodeId?.toString()
+        if (
+            (media as? CachedMedia)?.mediaSourceId == PIKPAK_CACHE_MEDIA_SOURCE_ID &&
+            subjectId != null && episodeId != null
+        ) {
+            playbackCoordinator?.begin(media.mediaId)
+            val cached = (engine as? OfflineDownloadLibrary)
+                ?.resolveCachedEpisode(subjectId, episodeId)
+            if (cached != null) {
+                playbackCoordinator?.playing(media.mediaId, cloudCacheHit = true)
+                return cached.toStreamingProvider(media)
+            }
+            logger.warn {
+                "PikPak library entry for subject=$subjectId episode=$episodeId is no longer playable; " +
+                        "waiting for explicit rematch"
+            }
+            throw MediaResolutionException(
+                ResolutionFailures.ENGINE_ERROR,
+                IllegalStateException("PikPak 云端资源已失效，请重新匹配"),
+            )
         }
         val uri = when (val d = media.download) {
             is ResourceLocation.MagnetLink -> d.uri
@@ -161,18 +186,21 @@ class OfflineDownloadMediaResolver(
         }
 
         playbackCoordinator?.playing(media.mediaId, cloudCacheHit = resolved.isCloudCacheHit)
-        return PikPakStreamingMediaDataProvider(
-            uri = resolved.streamUrl,
-            originalTitle = resolved.fileName ?: media.originalTitle,
+        return resolved.toStreamingProvider(media)
+    }
+
+    private fun ResolvedMedia.toStreamingProvider(media: Media): PikPakStreamingMediaDataProvider =
+        PikPakStreamingMediaDataProvider(
+            uri = streamUrl,
+            originalTitle = fileName ?: media.originalTitle,
             headers = emptyMap(),
             extraFiles = media.extraFiles.toMediampMediaExtraFiles(),
             mediaId = media.mediaId,
-            providerFileId = resolved.providerFileId,
-            fileSize = resolved.fileSize,
-            contentType = resolved.contentType,
+            providerFileId = providerFileId,
+            fileSize = fileSize,
+            contentType = contentType,
             playbackCoordinator = playbackCoordinator,
         )
-    }
 
     private suspend fun handleEngineFailure(
         media: Media,
@@ -192,5 +220,9 @@ class OfflineDownloadMediaResolver(
         playbackCoordinator?.failed(media.mediaId, cause)
         logger.warn(cause) { "[${engine.id}] resolve failed ($reason); no fallback available" }
         throw MediaResolutionException(reason, cause)
+    }
+
+    private companion object {
+        const val PIKPAK_CACHE_MEDIA_SOURCE_ID = "pikpak-cloud-cache"
     }
 }

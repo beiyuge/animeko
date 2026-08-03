@@ -111,6 +111,9 @@ sealed class SubjectCollectionRepository(
 
     abstract fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo>
 
+    /** Forces AniAPI refresh of the subject and its complete episode list, then updates local storage. */
+    abstract suspend fun forceRefreshSubjectCollection(subjectId: Int)
+
     abstract fun subjectCollectionsPager(
         query: CollectionsFilterQuery = CollectionsFilterQuery.Empty,
         pagingConfig: PagingConfig = PagingConfig(
@@ -224,6 +227,30 @@ class SubjectCollectionRepositoryImpl(
         return (currentTimeMillis() - lastFetched).milliseconds > cacheExpiry
     }
 
+    override suspend fun forceRefreshSubjectCollection(subjectId: Int) {
+        try {
+            withContext(defaultDispatcher) { fetchAndSaveSubjectCollection(subjectId) }
+        } catch (e: Exception) {
+            throw RepositoryException.wrapOrThrowCancellation(e)
+        }
+    }
+
+    private suspend fun fetchAndSaveSubjectCollection(subjectId: Int) {
+        val subject = subjectService.getSubjectCollection(subjectId) ?: return
+        val lastFetched = currentTimeMillis()
+        subjectCollectionDao.upsert(subject.toEntity(lastFetched = lastFetched))
+
+        val episodeEntities = subject.episodes.map {
+            it.toEntity1(subjectId, lastFetched = lastFetched)
+        }
+        val staleIds = episodeCollectionDao.listIdBySubjectId(subjectId).first().toMutableSet()
+        episodeCollectionDao.upsert(episodeEntities)
+        episodeEntities.forEach { staleIds.remove(it.episodeId) }
+        if (staleIds.isNotEmpty()) {
+            episodeCollectionDao.deleteAllByEpisodeIds(subjectId, staleIds.toList())
+        }
+    }
+
     override fun subjectCollectionFlow(
         subjectId: Int
     ): Flow<SubjectCollectionInfo> = getEpisodeTypeFiltersUseCase().flatMapLatest { epTypes ->
@@ -237,28 +264,7 @@ class SubjectCollectionRepositoryImpl(
 
                 // 如果没有缓存, 则 fetch 然后插入 subject 缓存
                 if (existing == null || existing.isExpired()) {
-                    val subject = subjectService.getSubjectCollection(subjectId)
-                    val lastFetched = currentTimeMillis()
-                    val subjectEntity = subject?.toEntity(
-                        lastFetched = lastFetched,
-                    )
-                    if (subjectEntity != null) {
-                        val episodeEntities = subject.episodes.map {
-                            it.toEntity1(subjectId, lastFetched = lastFetched)
-                        }
-                        subjectCollectionDao.upsert(subjectEntity)
-
-                        // 更新剧集列表
-                        val oldIds = episodeCollectionDao.listIdBySubjectId(subjectId).first().toMutableList()
-                        episodeCollectionDao.upsert(episodeEntities)
-                        for (newEntity in episodeEntities) {
-                            oldIds.remove(newEntity.episodeId)
-                        }
-                        if (oldIds.isNotEmpty()) { // 删除本地存的多余的剧集 (通常没有)
-                            episodeCollectionDao.deleteAllByEpisodeIds(subjectId, oldIds)
-                        }
-                    }
-                    // TODO: 2025/5/24 handle subject not found 
+                    fetchAndSaveSubjectCollection(subjectId)
                 }
             }
             .filterNotNull()

@@ -63,6 +63,7 @@ import me.him188.ani.app.data.repository.episode.EpisodeCommentRepository
 import me.him188.ani.app.data.repository.RepositoryServiceUnavailableException
 import me.him188.ani.app.data.repository.player.DanmakuRegexFilterRepository
 import me.him188.ani.app.data.repository.subject.SetSubjectCollectionTypeOrDeleteUseCase
+import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.comment.PostCommentUseCase
 import me.him188.ani.app.domain.danmaku.DanmakuRepository
@@ -102,6 +103,9 @@ import me.him188.ani.app.domain.player.extension.SaveMediaPreferenceExtension
 import me.him188.ani.app.domain.player.extension.SwitchMediaOnPlayerErrorExtension
 import me.him188.ani.app.domain.player.extension.SwitchNextEpisodeExtension
 import me.him188.ani.app.domain.player.extension.WatchTogetherPlayerExtension
+import me.him188.ani.torrent.offline.OfflineDownloadLibrary
+import me.him188.ani.torrent.offline.OfflineEpisodeAvailability
+import me.him188.ani.torrent.offline.classifyOfflineEpisodeAvailability
 import me.him188.ani.app.domain.settings.GetDanmakuRegexFilterListFlowUseCase
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsUseCase
 import me.him188.ani.app.domain.watchtogether.PlaybackAutomationGate
@@ -274,6 +278,8 @@ class EpisodeViewModel(
     private val setSubjectCollectionTypeOrDeleteUseCase: SetSubjectCollectionTypeOrDeleteUseCase by inject()
     private val getPreferredWebMediaSource: GetPreferredWebMediaSourceUseCase by inject()
     private val pikPakPlaybackCoordinator: PikPakPlaybackCoordinator by inject()
+    private val offlineDownloadLibrary: OfflineDownloadLibrary by inject()
+    private val subjectCollectionRepository: SubjectCollectionRepository by inject()
     private val webSessionManager: WebSessionManager by inject()
     private val playbackAutomationGate: PlaybackAutomationGate by inject()
     val playbackAutomationSuppressed get() = playbackAutomationGate.suppressed
@@ -370,6 +376,27 @@ class EpisodeViewModel(
     private val episodeCollectionsFlow = episodeCollectionRepository.subjectEpisodeCollectionInfosFlow(subjectId)
         .shareInBackground()
 
+    @OptIn(UnsafeEpisodeSessionApi::class)
+    val pikPakEpisodeAvailability = combine(
+        settingsRepository.pikpakConfig.flow,
+        subjectEpisodeInfoBundleFlow.filterNotNull(),
+        offlineDownloadLibrary.libraryState,
+    ) { config, bundle, library ->
+        if (!config.enabled) return@combine null
+        val target = bundle.episodeInfo.sort.number?.toInt() ?: return@combine null
+        val subjectEntries = library.entries.filter { it.subjectId == subjectId.toString() }
+        val cached = subjectEntries.mapNotNull { it.episodeNumber.toFloatOrNull()?.toInt() }.toSet()
+        val remoteMissing = subjectEntries.filter { it.entryId in library.remoteMissingEntryIds }
+            .mapNotNull { it.episodeNumber.toFloatOrNull()?.toInt() }
+            .toSet()
+        classifyOfflineEpisodeAvailability(
+            targetEpisode = target,
+            latestAiredEpisode = bundle.subjectCollectionInfo.airingInfo.latestEp?.number?.toInt() ?: 0,
+            cachedEpisodes = cached,
+            remoteMissingEpisodes = remoteMissing,
+        )
+    }.stateIn(backgroundScope, SharingStarted.WhileSubscribed(5_000), null)
+
     @UnsafeEpisodeSessionApi
     private val episodeInfoFlow = episodeCollectionFlow.map { it?.episodeInfo }.distinctUntilChanged()
     // endregion
@@ -404,6 +431,10 @@ class EpisodeViewModel(
 
     val videoScaffoldConfig: VideoScaffoldConfig by settingsRepository.videoScaffoldConfig
         .flow.produceState(VideoScaffoldConfig.Default)
+
+    val pikPakEnabled = settingsRepository.pikpakConfig.flow
+        .map { it.enabled }
+        .stateIn(backgroundScope, SharingStarted.WhileSubscribed(5_000), false)
 
     /** 当前生效的用户倍速范围. */
     val playbackSpeedRange: ClosedFloatingPointRange<Float>
@@ -990,6 +1021,13 @@ class EpisodeViewModel(
         }
     }
 
+    fun refreshPikPakAvailability() {
+        launchInBackground {
+            subjectCollectionRepository.forceRefreshSubjectCollection(subjectId)
+            offlineDownloadLibrary.sync()
+        }
+    }
+
     /**
      * UI handler for the "skip OP/ED" button.
      * Reports the action to server with throttling and then performs the seek.
@@ -1058,6 +1096,12 @@ class EpisodeViewModel(
     }
 
     init {
+        launchInBackground {
+            if (settingsRepository.pikpakConfig.flow.first().enabled) {
+                subjectCollectionRepository.forceRefreshSubjectCollection(subjectId)
+                offlineDownloadLibrary.sync()
+            }
+        }
         launchInBackground {
             combine(
                 subjectEpisodeInfoBundleFlow.filterNotNull(),

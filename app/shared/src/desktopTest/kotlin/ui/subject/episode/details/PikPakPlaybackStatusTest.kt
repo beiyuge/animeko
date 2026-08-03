@@ -26,6 +26,7 @@ import me.him188.ani.app.ui.lang.pikpak_playback_active
 import me.him188.ani.app.ui.lang.pikpak_playback_cloud_cache_hit
 import me.him188.ani.app.ui.lang.pikpak_playback_retry
 import me.him188.ani.app.ui.lang.pikpak_playback_use_anitorrent_once
+import me.him188.ani.torrent.offline.OfflineEpisodeAvailability
 import me.him188.ani.utils.platform.currentPlatformDesktop
 import me.him188.ani.utils.platform.isWindows
 import org.jetbrains.compose.resources.getString
@@ -33,6 +34,43 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PikPakPlaybackStatusTest {
+    @Test
+    fun `trailing gap offers refresh while not aired does not parse`() = runAniComposeUiTest {
+        var refreshCount = 0
+        setContent {
+            ProvideCompositionLocalsForPreview {
+                MaterialTheme(colorScheme = darkColorScheme()) {
+                    Box(Modifier.width(520.dp).padding(16.dp)) {
+                        PikPakEpisodeAvailabilityStatus(
+                            OfflineEpisodeAvailability.TrailingGap,
+                            onSelectResource = {},
+                            onRefresh = { refreshCount++ },
+                        )
+                    }
+                }
+            }
+        }
+        onNodeWithText("更新").performClick()
+        runOnIdle { assertEquals(1, refreshCount) }
+
+        setContent {
+            ProvideCompositionLocalsForPreview {
+                MaterialTheme(colorScheme = darkColorScheme()) {
+                    Box(Modifier.width(520.dp).padding(16.dp)) {
+                        PikPakEpisodeAvailabilityStatus(
+                            OfflineEpisodeAvailability.NotAired,
+                            onSelectResource = { error("未开播不应解析") },
+                            onRefresh = { error("未开播不应更新") },
+                        )
+                    }
+                }
+            }
+        }
+        onNodeWithText("尚未开播", substring = true).assertExists()
+        onNodeWithText("更新").assertDoesNotExist()
+        onNodeWithText("选择单集资源").assertDoesNotExist()
+    }
+
     @Test
     fun `playing status displays measured download and zero upload`() = runAniComposeUiTest {
         val active = runBlocking { getString(Lang.pikpak_playback_active) }
