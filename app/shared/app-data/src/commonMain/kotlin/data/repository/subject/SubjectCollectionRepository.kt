@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -110,6 +111,14 @@ sealed class SubjectCollectionRepository(
     abstract fun subjectCollectionCountsFlow(): Flow<SubjectCollectionCounts?>
 
     abstract fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo>
+
+    /**
+     * Observes lightweight cover metadata for [subjectIds] with one database query.
+     *
+     * Subjects missing from local storage are fetched sequentially so a large cloud library does not fan out
+     * one network request and database observer per subject.
+     */
+    abstract fun subjectCollectionCoverInfoFlow(subjectIds: Collection<Int>): Flow<List<SubjectCollectionCoverInfo>>
 
     /** Forces AniAPI refresh of the subject and its complete episode list, then updates local storage. */
     abstract suspend fun forceRefreshSubjectCollection(subjectId: Int)
@@ -283,6 +292,40 @@ class SubjectCollectionRepositoryImpl(
                 )
             }
     }.flowOn(defaultDispatcher)
+
+    override fun subjectCollectionCoverInfoFlow(
+        subjectIds: Collection<Int>,
+    ): Flow<List<SubjectCollectionCoverInfo>> {
+        val requestedIds = subjectIds.distinct()
+        if (requestedIds.isEmpty()) return flowOfEmptyList()
+
+        return subjectCollectionDao.filterByIds(requestedIds.toIntArray())
+            .combine(nsfwModeSettingsFlow) { entities, nsfwModeSettings ->
+                entities.map { entity ->
+                    SubjectCollectionCoverInfo(
+                        subjectId = entity.subjectId,
+                        imageLarge = entity.imageLarge,
+                        nsfwMode = if (entity.nsfw) nsfwModeSettings else NsfwMode.DISPLAY,
+                    )
+                }
+            }
+            .transformLatest { coverInfos ->
+                emit(coverInfos)
+                val availableIds = coverInfos.mapTo(mutableSetOf(), SubjectCollectionCoverInfo::subjectId)
+                for (subjectId in requestedIds) {
+                    if (subjectId in availableIds) continue
+                    try {
+                        fetchAndSaveSubjectCollection(subjectId)
+                    } catch (e: Exception) {
+                        logger.warn(
+                            "Failed to fetch subject cover metadata for subject $subjectId",
+                            RepositoryException.wrapOrThrowCancellation(e),
+                        )
+                    }
+                }
+            }
+            .flowOn(defaultDispatcher)
+    }
 
     override fun mostRecentlyUpdatedSubjectCollectionsFlow(
         limit: Int,
@@ -560,6 +603,12 @@ class SubjectCollectionRepositoryImpl(
         private val logger = logger<SubjectCollectionRepository>()
     }
 }
+
+data class SubjectCollectionCoverInfo(
+    val subjectId: Int,
+    val imageLarge: String,
+    val nsfwMode: NsfwMode,
+)
 
 data class CollectionsFilterQuery(
     val type: UnifiedCollectionType?,
