@@ -9,7 +9,7 @@
 
 package me.him188.ani.app.domain.player.extension
 
-import io.ktor.client.plugins.ClientRequestException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -28,7 +28,6 @@ import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import org.koin.core.Koin
 import org.openani.mediamp.MediampPlayer
-import org.openani.mediamp.isPlaying
 import kotlin.math.min
 import kotlin.time.Duration.Companion.seconds
 
@@ -100,9 +99,9 @@ class MarkAsWatchedExtension(
                     .let { if (enableSamplingAndDebounce) it.sampleWithInitial(5000) else it },
                 player.mediaProperties.map { it?.durationMillis }
                     .let { if (enableSamplingAndDebounce) it.debounce(5000) else it },
-                player.playbackState,
-            ) { pos, videoLength, playback ->
-                if (videoLength == null || !playback.isPlaying) return@combine
+                player.state,
+            ) { pos, videoLength, state ->
+                if (videoLength == null || !state.isPlaying) return@combine
                 if (videoLength < 10.seconds.inWholeMilliseconds) return@combine // 视频数据不正确, 忽略
                 if (pos >=
                     min(
@@ -112,8 +111,11 @@ class MarkAsWatchedExtension(
                 ) {
                     logger.info { "观看到 90%, 标记看过" }
                     try {
+                        // 只写本地并入队, 离线也会成功; 由 EpisodeCollectionSyncer 负责推到服务端
                         setEpisodeCollectionTypeUseCase(subjectId, episodeId, UnifiedCollectionType.DONE)
-                    } catch (e: ClientRequestException) {
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
                         logger.warn("Failed to setEpisodeCollectionTypeUseCase, see cause", e)
                     }
                     cancelScope() // 标记成功一次后就不要再检查了

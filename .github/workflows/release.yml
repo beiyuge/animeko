@@ -23,7 +23,14 @@ jobs:
     - id: 'step-2'
       run: 'cp ".github/workflows/release.yml" ".github/workflows/release.yml-check.yml" '
     - id: 'step-3'
-      run: '.github/workflows/src.main.kts'
+      run: |-
+        for attempt in 1 2 3; do
+          if .github/workflows/src.main.kts; then exit 0; fi
+          echo "::warning::Workflow generation failed on attempt $attempt, retrying"
+          rm -rf ~/.m2/repository/io/github/typesafegithub
+          sleep 30
+        done
+        exit 1
     - id: 'step-4'
       run: 'python .github/workflows/check_yaml_equivalence.py .github/workflows/release.yml .github/workflows/release.yml-check.yml'
   create-release:
@@ -58,7 +65,6 @@ jobs:
         GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
         OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY }}'
         GITHUB_REPOSITORY: '${{ github.repository }}'
-        CODEX_MODEL: 'gpt-5.5'
         GIT_TAG: '${{ steps.step-1.outputs.tag }}'
         TAG_VERSION: '${{ steps.step-2.outputs.substring }}'
       run: |-
@@ -86,7 +92,7 @@ jobs:
         echo "EOF" >> "$GITHUB_OUTPUT"
     - id: 'step-5'
       name: 'Create Release'
-      uses: 'softprops/action-gh-release@v1'
+      uses: 'softprops/action-gh-release@v2'
       with:
         body: '${{ steps.step-4.outputs.result }}'
         name: '${{ steps.step-2.outputs.substring }}'
@@ -132,7 +138,7 @@ jobs:
         echo "ani.enable.firebase=true" >> local.properties
         echo "firebase.ga.app.id=${{ secrets.FIREBASE_GA_APP_ID }}" >> local.properties
         echo "firebase.ga.api.secret=${{ secrets.FIREBASE_GA_API_SECRET }}" >> local.properties
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-6'
       name: 'Get JBR (Windows)'
       env:
@@ -211,7 +217,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-15'
       name: 'Compile Kotlin (Attempt #1)'
       continue-on-error: true
@@ -325,13 +331,13 @@ jobs:
         echo "ani.enable.firebase=true" >> local.properties
         echo "firebase.ga.app.id=${{ secrets.FIREBASE_GA_APP_ID }}" >> local.properties
         echo "firebase.ga.api.secret=${{ secrets.FIREBASE_GA_API_SECRET }}" >> local.properties
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-6'
       name: 'Setup Android SDK'
       uses: 'android-actions/setup-android@v3'
       with:
         accept-android-sdk-licenses: 'true'
-        packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+        packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
     - id: 'step-7'
       name: 'Get JBR (Windows)'
       env:
@@ -410,7 +416,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-16'
       name: 'Compile Kotlin (Attempt #1)'
       continue-on-error: true
@@ -528,7 +534,7 @@ jobs:
         echo "ani.enable.firebase=true" >> local.properties
         echo "firebase.ga.app.id=${{ secrets.FIREBASE_GA_APP_ID }}" >> local.properties
         echo "firebase.ga.api.secret=${{ secrets.FIREBASE_GA_API_SECRET }}" >> local.properties
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-7'
       name: 'Resolve JBR location'
       shell: 'bash'
@@ -675,7 +681,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-19'
       name: 'Compile Kotlin (Attempt #1)'
       continue-on-error: true
@@ -772,7 +778,6 @@ jobs:
       continue-on-error: true
       run: |
         echo "ani.android.abis=arm64-v8a" >> local.properties
-        echo "ani.enable.ios=true" >> local.properties
         echo "ani.dandanplay.app.id=${{ secrets.DANDANPLAY_APP_ID }}" >> local.properties
         echo "ani.dandanplay.app.secret=${{ secrets.DANDANPLAY_APP_SECRET }}" >> local.properties
         echo "ani.sentry.dsn=${{ secrets.SENTRY_DSN }}" >> local.properties
@@ -783,7 +788,7 @@ jobs:
         echo "ani.enable.firebase=true" >> local.properties
         echo "firebase.ga.app.id=${{ secrets.FIREBASE_GA_APP_ID }}" >> local.properties
         echo "firebase.ga.api.secret=${{ secrets.FIREBASE_GA_API_SECRET }}" >> local.properties
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-7'
       name: 'Resolve JBR location'
       shell: 'bash'
@@ -930,7 +935,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-19'
       name: 'Compile Kotlin (Attempt #1)'
       continue-on-error: true
@@ -1047,7 +1052,7 @@ jobs:
         echo "ani.enable.firebase=true" >> local.properties
         echo "firebase.ga.app.id=${{ secrets.FIREBASE_GA_APP_ID }}" >> local.properties
         echo "firebase.ga.api.secret=${{ secrets.FIREBASE_GA_API_SECRET }}" >> local.properties
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-8'
       name: 'Get JBR (Windows)'
       env:
@@ -1150,7 +1155,7 @@ jobs:
         fi
         chmod 600 "$FILE_PATH"
         echo "filePath=$FILE_PATH" >> "$GITHUB_OUTPUT"
-      if: '${{ (github.repository == ''open-ani/animeko'') && (!(github.event_name == ''pull_request'')) }}'
+      if: '${{ (github.repository == ''open-ani/animeko'') && ((!(github.event_name == ''pull_request'')) || (github.event.pull_request.head.repo.full_name == github.repository)) }}'
     - id: 'step-19'
       name: 'Compile Kotlin (Attempt #1)'
       continue-on-error: true
@@ -1177,14 +1182,25 @@ jobs:
       name: 'Build Android Debug APKs (Attempt #1)'
       continue-on-error: true
       timeout-minutes: 180
-      run: './gradlew assembleDefaultDebug "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      run: './gradlew assembleDefaultDebug assembleTvDebug "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
     - id: 'step-24'
       name: 'Build Android Debug APKs (Attempt #2)'
       continue-on-error: false
       timeout-minutes: 180
-      run: './gradlew assembleDefaultDebug "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      run: './gradlew assembleDefaultDebug assembleTvDebug "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
       if: '${{ steps.step-23.outcome == ''failure'' }}'
     - id: 'step-25'
+      name: 'Test Android TV (Attempt #1)'
+      continue-on-error: true
+      timeout-minutes: 180
+      run: './gradlew :app:shared:tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-foundation-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-episode-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-subject-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+    - id: 'step-26'
+      name: 'Test Android TV (Attempt #2)'
+      continue-on-error: false
+      timeout-minutes: 180
+      run: './gradlew :app:shared:tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-foundation-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-episode-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' :app:shared:ui-subject-tv:testAndroidHostTest --tests ''me.him188.ani.tv.*'' "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ steps.step-25.outcome == ''failure'' }}'
+    - id: 'step-27'
       name: 'Upload Android Debug APK arm64-v8a (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1192,7 +1208,7 @@ jobs:
         name: 'ani-android-arm64-v8a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-arm64-v8a-debug.apk'
         overwrite: 'true'
-    - id: 'step-26'
+    - id: 'step-28'
       name: 'Upload Android Debug APK arm64-v8a (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1200,8 +1216,8 @@ jobs:
         name: 'ani-android-arm64-v8a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-arm64-v8a-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-25.outcome == ''failure'' }}'
-    - id: 'step-27'
+      if: '${{ steps.step-27.outcome == ''failure'' }}'
+    - id: 'step-29'
       name: 'Upload Android Debug APK arm64-v8a (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1209,8 +1225,8 @@ jobs:
         name: 'ani-android-arm64-v8a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-arm64-v8a-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-26.outcome == ''failure'' }}'
-    - id: 'step-28'
+      if: '${{ steps.step-28.outcome == ''failure'' }}'
+    - id: 'step-30'
       name: 'Upload Android Debug APK x86_64 (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1218,7 +1234,7 @@ jobs:
         name: 'ani-android-x86_64-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-x86_64-debug.apk'
         overwrite: 'true'
-    - id: 'step-29'
+    - id: 'step-31'
       name: 'Upload Android Debug APK x86_64 (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1226,8 +1242,8 @@ jobs:
         name: 'ani-android-x86_64-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-x86_64-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-28.outcome == ''failure'' }}'
-    - id: 'step-30'
+      if: '${{ steps.step-30.outcome == ''failure'' }}'
+    - id: 'step-32'
       name: 'Upload Android Debug APK x86_64 (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1235,8 +1251,8 @@ jobs:
         name: 'ani-android-x86_64-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-x86_64-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-29.outcome == ''failure'' }}'
-    - id: 'step-31'
+      if: '${{ steps.step-31.outcome == ''failure'' }}'
+    - id: 'step-33'
       name: 'Upload Android Debug APK armeabi-v7a (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1244,7 +1260,7 @@ jobs:
         name: 'ani-android-armeabi-v7a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-armeabi-v7a-debug.apk'
         overwrite: 'true'
-    - id: 'step-32'
+    - id: 'step-34'
       name: 'Upload Android Debug APK armeabi-v7a (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1252,8 +1268,8 @@ jobs:
         name: 'ani-android-armeabi-v7a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-armeabi-v7a-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-31.outcome == ''failure'' }}'
-    - id: 'step-33'
+      if: '${{ steps.step-33.outcome == ''failure'' }}'
+    - id: 'step-35'
       name: 'Upload Android Debug APK armeabi-v7a (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1261,8 +1277,8 @@ jobs:
         name: 'ani-android-armeabi-v7a-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-armeabi-v7a-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-32.outcome == ''failure'' }}'
-    - id: 'step-34'
+      if: '${{ steps.step-34.outcome == ''failure'' }}'
+    - id: 'step-36'
       name: 'Upload Android Debug APK universal (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1270,7 +1286,7 @@ jobs:
         name: 'ani-android-universal-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-universal-debug.apk'
         overwrite: 'true'
-    - id: 'step-35'
+    - id: 'step-37'
       name: 'Upload Android Debug APK universal (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1278,8 +1294,8 @@ jobs:
         name: 'ani-android-universal-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-universal-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-34.outcome == ''failure'' }}'
-    - id: 'step-36'
+      if: '${{ steps.step-36.outcome == ''failure'' }}'
+    - id: 'step-38'
       name: 'Upload Android Debug APK universal (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1287,8 +1303,8 @@ jobs:
         name: 'ani-android-universal-debug'
         path: 'app/android/build/outputs/apk/default/debug/android-default-universal-debug.apk'
         overwrite: 'true'
-      if: '${{ steps.step-35.outcome == ''failure'' }}'
-    - id: 'step-37'
+      if: '${{ steps.step-37.outcome == ''failure'' }}'
+    - id: 'step-39'
       name: 'Build Android Release APKs (Attempt #1)'
       env:
         signing_release_storeFileFromRoot: '${{ steps.step-17.outputs.filePath }}'
@@ -1297,9 +1313,9 @@ jobs:
         signing_release_keyPassword: '${{ secrets.SIGNING_RELEASE_KEYPASSWORD }}'
       continue-on-error: true
       timeout-minutes: 180
-      run: './gradlew assembleDefaultRelease "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      run: './gradlew assembleDefaultRelease assembleTvRelease "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
       if: '${{ ((github.repository == ''open-ani/animeko'' || github.repository == ''beiyuge/animeko'')) && (!(github.event_name == ''pull_request'')) }}'
-    - id: 'step-38'
+    - id: 'step-40'
       name: 'Build Android Release APKs (Attempt #2)'
       env:
         signing_release_storeFileFromRoot: '${{ steps.step-17.outputs.filePath }}'
@@ -1308,9 +1324,9 @@ jobs:
         signing_release_keyPassword: '${{ secrets.SIGNING_RELEASE_KEYPASSWORD }}'
       continue-on-error: false
       timeout-minutes: 180
-      run: './gradlew assembleDefaultRelease "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ steps.step-37.outcome == ''failure'' }}'
-    - id: 'step-39'
+      run: './gradlew assembleDefaultRelease assembleTvRelease "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ steps.step-39.outcome == ''failure'' }}'
+    - id: 'step-41'
       name: 'Upload Android Release APK arm64-v8a (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1318,7 +1334,7 @@ jobs:
         name: 'ani-android-arm64-v8a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-arm64-v8a-release.apk'
         overwrite: 'true'
-    - id: 'step-40'
+    - id: 'step-42'
       name: 'Upload Android Release APK arm64-v8a (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1326,8 +1342,8 @@ jobs:
         name: 'ani-android-arm64-v8a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-arm64-v8a-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-39.outcome == ''failure'' }}'
-    - id: 'step-41'
+      if: '${{ steps.step-41.outcome == ''failure'' }}'
+    - id: 'step-43'
       name: 'Upload Android Release APK arm64-v8a (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1335,8 +1351,34 @@ jobs:
         name: 'ani-android-arm64-v8a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-arm64-v8a-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-40.outcome == ''failure'' }}'
-    - id: 'step-42'
+      if: '${{ steps.step-42.outcome == ''failure'' }}'
+    - id: 'step-44'
+      name: 'Upload Android TV Release APK arm64-v8a (Attempt #1)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-arm64-v8a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-arm64-v8a-release.apk'
+        overwrite: 'true'
+    - id: 'step-45'
+      name: 'Upload Android TV Release APK arm64-v8a (Attempt #2)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-arm64-v8a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-arm64-v8a-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-44.outcome == ''failure'' }}'
+    - id: 'step-46'
+      name: 'Upload Android TV Release APK arm64-v8a (Attempt #3)'
+      continue-on-error: false
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-arm64-v8a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-arm64-v8a-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-45.outcome == ''failure'' }}'
+    - id: 'step-47'
       name: 'Upload Android Release APK x86_64 (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1344,7 +1386,7 @@ jobs:
         name: 'ani-android-x86_64-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-x86_64-release.apk'
         overwrite: 'true'
-    - id: 'step-43'
+    - id: 'step-48'
       name: 'Upload Android Release APK x86_64 (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1352,8 +1394,8 @@ jobs:
         name: 'ani-android-x86_64-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-x86_64-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-42.outcome == ''failure'' }}'
-    - id: 'step-44'
+      if: '${{ steps.step-47.outcome == ''failure'' }}'
+    - id: 'step-49'
       name: 'Upload Android Release APK x86_64 (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1361,8 +1403,34 @@ jobs:
         name: 'ani-android-x86_64-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-x86_64-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-43.outcome == ''failure'' }}'
-    - id: 'step-45'
+      if: '${{ steps.step-48.outcome == ''failure'' }}'
+    - id: 'step-50'
+      name: 'Upload Android TV Release APK x86_64 (Attempt #1)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-x86_64-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-x86_64-release.apk'
+        overwrite: 'true'
+    - id: 'step-51'
+      name: 'Upload Android TV Release APK x86_64 (Attempt #2)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-x86_64-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-x86_64-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-50.outcome == ''failure'' }}'
+    - id: 'step-52'
+      name: 'Upload Android TV Release APK x86_64 (Attempt #3)'
+      continue-on-error: false
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-x86_64-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-x86_64-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-51.outcome == ''failure'' }}'
+    - id: 'step-53'
       name: 'Upload Android Release APK armeabi-v7a (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1370,7 +1438,7 @@ jobs:
         name: 'ani-android-armeabi-v7a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-armeabi-v7a-release.apk'
         overwrite: 'true'
-    - id: 'step-46'
+    - id: 'step-54'
       name: 'Upload Android Release APK armeabi-v7a (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1378,8 +1446,8 @@ jobs:
         name: 'ani-android-armeabi-v7a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-armeabi-v7a-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-45.outcome == ''failure'' }}'
-    - id: 'step-47'
+      if: '${{ steps.step-53.outcome == ''failure'' }}'
+    - id: 'step-55'
       name: 'Upload Android Release APK armeabi-v7a (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1387,8 +1455,34 @@ jobs:
         name: 'ani-android-armeabi-v7a-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-armeabi-v7a-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-46.outcome == ''failure'' }}'
-    - id: 'step-48'
+      if: '${{ steps.step-54.outcome == ''failure'' }}'
+    - id: 'step-56'
+      name: 'Upload Android TV Release APK armeabi-v7a (Attempt #1)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-armeabi-v7a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-armeabi-v7a-release.apk'
+        overwrite: 'true'
+    - id: 'step-57'
+      name: 'Upload Android TV Release APK armeabi-v7a (Attempt #2)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-armeabi-v7a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-armeabi-v7a-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-56.outcome == ''failure'' }}'
+    - id: 'step-58'
+      name: 'Upload Android TV Release APK armeabi-v7a (Attempt #3)'
+      continue-on-error: false
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-armeabi-v7a-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-armeabi-v7a-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-57.outcome == ''failure'' }}'
+    - id: 'step-59'
       name: 'Upload Android Release APK universal (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1396,7 +1490,7 @@ jobs:
         name: 'ani-android-universal-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-universal-release.apk'
         overwrite: 'true'
-    - id: 'step-49'
+    - id: 'step-60'
       name: 'Upload Android Release APK universal (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1404,8 +1498,8 @@ jobs:
         name: 'ani-android-universal-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-universal-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-48.outcome == ''failure'' }}'
-    - id: 'step-50'
+      if: '${{ steps.step-59.outcome == ''failure'' }}'
+    - id: 'step-61'
       name: 'Upload Android Release APK universal (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1413,8 +1507,34 @@ jobs:
         name: 'ani-android-universal-release'
         path: 'app/android/build/outputs/apk/default/release/android-default-universal-release.apk'
         overwrite: 'true'
-      if: '${{ steps.step-49.outcome == ''failure'' }}'
-    - id: 'step-51'
+      if: '${{ steps.step-60.outcome == ''failure'' }}'
+    - id: 'step-62'
+      name: 'Upload Android TV Release APK universal (Attempt #1)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-universal-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-universal-release.apk'
+        overwrite: 'true'
+    - id: 'step-63'
+      name: 'Upload Android TV Release APK universal (Attempt #2)'
+      continue-on-error: true
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-universal-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-universal-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-62.outcome == ''failure'' }}'
+    - id: 'step-64'
+      name: 'Upload Android TV Release APK universal (Attempt #3)'
+      continue-on-error: false
+      uses: 'actions/upload-artifact@v4'
+      with:
+        name: 'ani-android-tv-universal-release'
+        path: 'app/android/build/outputs/apk/tv/release/android-tv-universal-release.apk'
+        overwrite: 'true'
+      if: '${{ steps.step-63.outcome == ''failure'' }}'
+    - id: 'step-65'
       name: 'Upload Android APK for Release (Attempt #1)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1437,7 +1557,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-    - id: 'step-52'
+    - id: 'step-66'
       name: 'Upload Android APK for Release (Attempt #2)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1460,20 +1580,67 @@ jobs:
       continue-on-error: false
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ steps.step-51.outcome == ''failure'' }}'
-    - id: 'step-53'
+      if: '${{ steps.step-65.outcome == ''failure'' }}'
+    - id: 'step-67'
+      name: 'Upload Android TV APK for Release (Attempt #1)'
+      env:
+        GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        GITHUB_REPOSITORY: '${{ secrets.GITHUB_REPOSITORY }}'
+        CI_RELEASE_ID: '${{ needs.create-release.outputs.id }}'
+        CI_TAG: '${{ steps.step-1.outputs.tag }}'
+        UPLOAD_TO_S3: 'true'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_BASEURL: '${{ secrets.AWS_BASEURL }}'
+        AWS_REGION: '${{ secrets.AWS_REGION }}'
+        AWS_BUCKET: '${{ secrets.AWS_BUCKET }}'
+        APPSTORE_API_KEY_ID: '${{ secrets.APPSTORE_API_KEY_ID }}'
+        APPSTORE_API_PRIVATE_KEY: '${{ secrets.APPSTORE_API_PRIVATE_KEY }}'
+        APPSTORE_ISSUER_ID: '${{ secrets.APPSTORE_ISSUER_ID }}'
+        APPLE_DEVELOPER_TEAM_ID: '${{ secrets.APPLE_DEVELOPER_TEAM_ID }}'
+        APPSTORE_PROVISIONING_PROFILE: '${{ secrets.APPSTORE_PROVISIONING_PROFILE }}'
+        APPLE_DISTRIBUTION_PRIVATE_KEY_PFX: '${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY_PFX }}'
+        APPLE_DISTRIBUTION_PRIVATE_KEY_PFX_IMPORT_PWD: '${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY_PFX_IMPORT_PWD }}'
+      continue-on-error: true
+      timeout-minutes: 180
+      run: './gradlew :ci-helper:uploadAndroidTvApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+    - id: 'step-68'
+      name: 'Upload Android TV APK for Release (Attempt #2)'
+      env:
+        GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+        GITHUB_REPOSITORY: '${{ secrets.GITHUB_REPOSITORY }}'
+        CI_RELEASE_ID: '${{ needs.create-release.outputs.id }}'
+        CI_TAG: '${{ steps.step-1.outputs.tag }}'
+        UPLOAD_TO_S3: 'true'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_BASEURL: '${{ secrets.AWS_BASEURL }}'
+        AWS_REGION: '${{ secrets.AWS_REGION }}'
+        AWS_BUCKET: '${{ secrets.AWS_BUCKET }}'
+        APPSTORE_API_KEY_ID: '${{ secrets.APPSTORE_API_KEY_ID }}'
+        APPSTORE_API_PRIVATE_KEY: '${{ secrets.APPSTORE_API_PRIVATE_KEY }}'
+        APPSTORE_ISSUER_ID: '${{ secrets.APPSTORE_ISSUER_ID }}'
+        APPLE_DEVELOPER_TEAM_ID: '${{ secrets.APPLE_DEVELOPER_TEAM_ID }}'
+        APPSTORE_PROVISIONING_PROFILE: '${{ secrets.APPSTORE_PROVISIONING_PROFILE }}'
+        APPLE_DISTRIBUTION_PRIVATE_KEY_PFX: '${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY_PFX }}'
+        APPLE_DISTRIBUTION_PRIVATE_KEY_PFX_IMPORT_PWD: '${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY_PFX_IMPORT_PWD }}'
+      continue-on-error: false
+      timeout-minutes: 180
+      run: './gradlew :ci-helper:uploadAndroidTvApk "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
+      if: '${{ steps.step-67.outcome == ''failure'' }}'
+    - id: 'step-69'
       name: 'Generate QR code for APK (GitHub)'
       uses: 'snow-actions/qrcode@v1.0.0'
       with:
         text: 'https://github.com/beiyuge/animeko/releases/download/${{ steps.step-1.outputs.tag }}/ani-${{ steps.step-2.outputs.substring }}-universal.apk'
         path: 'apk-qrcode-github.png'
-    - id: 'step-54'
+    - id: 'step-70'
       name: 'Generate QR code for APK (Cloudflare)'
       uses: 'snow-actions/qrcode@v1.0.0'
       with:
         text: 'https://d.myani.org/${{ steps.step-1.outputs.tag }}/ani-${{ steps.step-2.outputs.substring }}-universal.apk'
         path: 'apk-qrcode-cloudflare.png'
-    - id: 'step-55'
+    - id: 'step-71'
       name: 'Upload QR code (Attempt #1)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1496,7 +1663,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApkQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-    - id: 'step-56'
+    - id: 'step-72'
       name: 'Upload QR code (Attempt #2)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1519,26 +1686,29 @@ jobs:
       continue-on-error: false
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadAndroidApkQR "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ steps.step-55.outcome == ''failure'' }}'
-    - id: 'step-57'
+      if: '${{ steps.step-71.outcome == ''failure'' }}'
+    - id: 'step-73'
+      name: 'Install patchelf'
+      run: 'sudo apt-get install -y patchelf'
+    - id: 'step-74'
       name: 'Package Desktop (Attempt #1)'
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew createReleaseDistributable "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-    - id: 'step-58'
+    - id: 'step-75'
       name: 'Package Desktop (Attempt #2)'
       continue-on-error: false
       timeout-minutes: 180
       run: './gradlew createReleaseDistributable "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ steps.step-57.outcome == ''failure'' }}'
-    - id: 'step-59'
+      if: '${{ steps.step-74.outcome == ''failure'' }}'
+    - id: 'step-76'
       name: 'Upload compose logs'
       uses: 'actions/upload-artifact@v4'
       with:
         name: 'compose-logs-github-ubuntu-2404'
         path: 'app/desktop/build/compose/logs'
       if: '${{ always() }}'
-    - id: 'step-60'
+    - id: 'step-77'
       name: 'Build AppImage'
       run: |-
         # Download appimagetool
@@ -1564,7 +1734,13 @@ jobs:
         # Fix permissions
         chmod a+x AppDir/AppRun
         chmod a+x AppDir/usr/bin/Ani
-        chmod a+x AppDir/usr/lib/runtime/lib/jcef_helper
+
+        # The CEF helpers get their executable bit from restoreLinuxRuntimeExecutables,
+        # so assert rather than chmod. A chmod here would keep the AppImage green while
+        # the deb, the rpm and every direct user of createReleaseDistributable ship a
+        # runtime whose helpers cannot be spawned (#3259).
+        test -x AppDir/usr/lib/runtime/lib/jcef_helper
+        test -x AppDir/usr/lib/runtime/lib/cef_server
 
         # Build an AppImage whose zsync metadata points at this repository's release asset.
         # Build with the final release filename so the generated zsync metadata keeps that name,
@@ -1583,7 +1759,7 @@ jobs:
         sed -i "s|^URL:.*|URL: $releaseAsset|" "$releaseAsset.zsync"
         mv "$releaseAsset" Animeko-x86_64.AppImage
         mv "$releaseAsset.zsync" Animeko-x86_64.AppImage.zsync
-    - id: 'step-61'
+    - id: 'step-78'
       name: 'Upload Linux packages (Attempt #1)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1594,7 +1770,7 @@ jobs:
           Animeko-x86_64.AppImage.zsync
         if-no-files-found: 'error'
         overwrite: 'true'
-    - id: 'step-62'
+    - id: 'step-79'
       name: 'Upload Linux packages (Attempt #2)'
       continue-on-error: true
       uses: 'actions/upload-artifact@v4'
@@ -1605,8 +1781,8 @@ jobs:
           Animeko-x86_64.AppImage.zsync
         if-no-files-found: 'error'
         overwrite: 'true'
-      if: '${{ steps.step-61.outcome == ''failure'' }}'
-    - id: 'step-63'
+      if: '${{ steps.step-78.outcome == ''failure'' }}'
+    - id: 'step-80'
       name: 'Upload Linux packages (Attempt #3)'
       continue-on-error: false
       uses: 'actions/upload-artifact@v4'
@@ -1617,8 +1793,8 @@ jobs:
           Animeko-x86_64.AppImage.zsync
         if-no-files-found: 'error'
         overwrite: 'true'
-      if: '${{ steps.step-62.outcome == ''failure'' }}'
-    - id: 'step-64'
+      if: '${{ steps.step-79.outcome == ''failure'' }}'
+    - id: 'step-81'
       name: 'Upload Desktop Installers (Attempt #1)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1641,7 +1817,7 @@ jobs:
       continue-on-error: true
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-    - id: 'step-65'
+    - id: 'step-82'
       name: 'Upload Desktop Installers (Attempt #2)'
       env:
         GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -1664,8 +1840,8 @@ jobs:
       continue-on-error: false
       timeout-minutes: 180
       run: './gradlew :ci-helper:uploadDesktopInstallers "--no-configuration-cache" "--scan" "-Porg.gradle.daemon.idletimeout=60000" "-Dfile.encoding=UTF-8" "-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g" "-Dkotlin.daemon.jvm.options=-Xmx6g"'
-      if: '${{ steps.step-64.outcome == ''failure'' }}'
-    - id: 'step-66'
+      if: '${{ steps.step-81.outcome == ''failure'' }}'
+    - id: 'step-83'
       name: 'Upload compose logs'
       uses: 'actions/upload-artifact@v4'
       with:

@@ -22,6 +22,14 @@ import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
 import me.him188.ani.app.data.models.subject.SubjectSeriesInfo
 import me.him188.ani.app.data.models.subject.TestSubjectCollections
+import me.him188.ani.app.data.persistent.MemoryDataStore
+import me.him188.ani.app.data.persistent.database.dao.WebSearchSessionCacheDao
+import me.him188.ani.app.data.persistent.database.dao.WebSearchSessionCacheEntity
+import me.him188.ani.app.data.persistent.database.dao.createMemoryPlaybackHistoryDao
+import me.him188.ani.app.data.repository.media.SelectorMediaSourceEpisodeCacheRepository
+import me.him188.ani.app.data.repository.player.EpisodeHistories
+import me.him188.ani.app.data.repository.player.EpisodePlayHistoryRepository
+import me.him188.ani.app.data.repository.player.EpisodePlayHistoryRepositoryImpl
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.hls.NoopHlsPlaybackPreparer
 import me.him188.ani.app.domain.settings.GetVideoScaffoldConfigUseCase
@@ -30,6 +38,7 @@ import me.him188.ani.app.domain.watchtogether.PlaybackAutomationGate
 import org.koin.core.Koin
 import org.koin.dsl.module
 import org.openani.mediamp.test.TestMediampPlayer
+import kotlin.time.Duration
 
 /**
  * Test helper for [EpisodeFetchSelectPlayState] and related states.
@@ -93,6 +102,20 @@ class EpisodePlayerTestSuite(
                     single {
                         LocalTorrentAccessPolicy(flowOf(PikPakConfig.Default), backgroundScope)
                     }
+                    // 加载媒体前读取续播进度 (用作 HLS 预缓存的提示)
+                    single<EpisodePlayHistoryRepository> {
+                        EpisodePlayHistoryRepositoryImpl(
+                            MemoryDataStore(EpisodeHistories.Empty),
+                            createMemoryPlaybackHistoryDao(),
+                        )
+                    }
+                    // EpisodeFetchSelectPlayState 会在 onUIReady/onClose 清理过期的 web 搜索缓存
+                    single<SelectorMediaSourceEpisodeCacheRepository> {
+                        SelectorMediaSourceEpisodeCacheRepository(
+                            NoopWebSearchSessionCacheDao,
+                            userTtlFlow = flowOf(Duration.ZERO),
+                        )
+                    }
                 },
             ),
         )
@@ -111,6 +134,34 @@ class EpisodePlayerTestSuite(
             ),
         )
     }
+}
+
+/**
+ * 不存储任何行的 [WebSearchSessionCacheDao]: 测试中的 web 源搜索缓存永远不命中.
+ */
+private object NoopWebSearchSessionCacheDao : WebSearchSessionCacheDao {
+    override suspend fun insertAll(items: List<WebSearchSessionCacheEntity>) {}
+
+    override suspend fun deletePage(
+        requesterSubjectId: Int?,
+        mediaSourceId: String,
+        subjectName: String,
+        subjectUrl: String,
+    ) {
+    }
+
+    override suspend fun filterBySubjectName(
+        requesterSubjectId: Int?,
+        mediaSourceId: String,
+        subjectName: String,
+        now: Long,
+    ): List<WebSearchSessionCacheEntity> = emptyList()
+
+    override suspend fun deleteExpired(now: Long) {}
+
+    override suspend fun deleteByRequestedSubject(requesterSubjectId: Int?) {}
+
+    override suspend fun deleteByRequestedSubjectAndSource(requesterSubjectId: Int?, mediaSourceId: String) {}
 }
 
 /**

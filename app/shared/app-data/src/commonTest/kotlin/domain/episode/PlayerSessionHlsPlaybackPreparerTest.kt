@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
 import me.him188.ani.app.domain.media.TestMediaList
+import me.him188.ani.app.domain.media.hls.HlsPlaybackOptions
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparerResult
 import me.him188.ani.app.domain.media.hls.HlsPlaybackProxySession
@@ -132,7 +133,7 @@ class PlayerSessionHlsPlaybackPreparerTest {
                         GetVideoScaffoldConfigUseCase {
                             flowOf(
                                 VideoScaffoldConfig.AllDisabled.copy(
-                                    enableExperimentalHlsSegmentFiltering = hlsEnabled,
+                                    enableHlsAdFiltering = hlsEnabled,
                                 ),
                             )
                         }
@@ -145,7 +146,7 @@ class PlayerSessionHlsPlaybackPreparerTest {
             ),
         )
         val player = TestMediampPlayer(StandardTestDispatcher(testScheduler))
-        return PlayerSession(player, koin, mainDispatcher = EmptyCoroutineContext)
+        return PlayerSession(player, koin, backgroundScope, mainDispatcher = EmptyCoroutineContext)
     }
 
     private class StaticMediaResolver(
@@ -169,7 +170,11 @@ class PlayerSessionHlsPlaybackPreparerTest {
         var prepareCount: Int = 0
             private set
 
-        override suspend fun prepare(data: UriMediaData): HlsPlaybackPreparerResult {
+        override suspend fun prepare(
+            data: UriMediaData,
+            options: HlsPlaybackOptions,
+            startPositionHintMillis: Long?,
+        ): HlsPlaybackPreparerResult {
             prepareCount++
             val session = RecordingHlsPlaybackProxySession()
             sessions += session

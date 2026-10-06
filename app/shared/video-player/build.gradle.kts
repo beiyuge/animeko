@@ -8,19 +8,14 @@
  */
 
 plugins {
-    alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.kotlin.multiplatform.library)
-    alias(libs.plugins.kotlin.plugin.compose)
-    alias(libs.plugins.jetbrains.compose)
-
-    `ani-mpp-lib-targets`
+    id("ani.kmp-compose")
     alias(libs.plugins.kotlin.plugin.serialization)
 
     // alias(libs.plugins.kotlinx.atomicfu)
 }
 
 kotlin {
-    androidLibrary {
+    android {
         namespace = "me.him188.ani.app.video.player"
     }
     sourceSets.commonMain.dependencies {
@@ -31,6 +26,7 @@ kotlin {
         api(libs.kotlinx.coroutines.core)
         api(projects.utils.coroutines)
         api(projects.danmaku.danmakuApi)
+        implementation(projects.utils.videoEnhancementShaderProvider)
     }
     sourceSets.commonTest.dependencies {
         implementation(projects.utils.uiTesting)
@@ -38,11 +34,17 @@ kotlin {
     sourceSets.androidMain.dependencies {
         implementation(libs.compose.material3.adaptive.core)
         implementation(libs.androidx.media3.ui)
+        implementation(libs.androidx.media3.effect)
         implementation(libs.androidx.media3.exoplayer)
         implementation(libs.androidx.media3.exoplayer.dash)
         implementation(libs.androidx.media3.exoplayer.hls)
         implementation(libs.libass.media)
+        implementation(libs.androidx.core.ktx)
         api(libs.mediamp.exoplayer)
+    }
+    sourceSets.getByName("androidHostTest").dependencies {
+        implementation(libs.mediamp.test)
+        implementation(libs.kotlinx.coroutines.test)
     }
     sourceSets.desktopMain.dependencies {
         api(compose.desktop.currentOs) {
@@ -54,7 +56,6 @@ kotlin {
         // 运行时按平台加载对应 native library (见 app/desktop). mpv: Windows x64 / Windows arm64 / Linux x64 / macOS arm64,
         // VLC: macOS x64.
         api(libs.mediamp.mpv)
-        api(libs.mediamp.vlc)
     }
     sourceSets.appleMain.dependencies {
         api(libs.mediamp.avkit)

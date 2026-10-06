@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
@@ -34,8 +35,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import me.him188.ani.app.data.repository.media.SelectorMediaSourceEpisodeCacheRepository
+import me.him188.ani.app.data.repository.player.EpisodePlayHistoryRepository
 import me.him188.ani.app.domain.foundation.LoadError
+import me.him188.ani.app.domain.media.hls.HlsPlaybackPreparer
 import me.him188.ani.app.domain.media.fetch.MediaFetchSession
+import me.him188.ani.app.domain.media.fetch.MediaSourceManager
+import me.him188.ani.app.domain.media.fetch.createFetchFetchSession
 import me.him188.ani.app.domain.media.resolver.toEpisodeMetadata
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.player.ExtensionException
@@ -45,13 +51,14 @@ import me.him188.ani.app.domain.player.extension.ExtensionBackgroundTaskScope
 import me.him188.ani.app.domain.player.extension.PlayerExtension
 import me.him188.ani.app.domain.player.extension.PlayerExtensionEvent
 import me.him188.ani.app.domain.usecase.GlobalKoin
+import me.him188.ani.app.domain.watchtogether.PlaybackAutomationGate
 import me.him188.ani.utils.analytics.Analytics
 import me.him188.ani.utils.analytics.AnalyticsEvent.Companion.EpisodeSwitch
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
+import me.him188.ani.utils.logging.warn
 import org.koin.core.Koin
 import org.openani.mediamp.MediampPlayer
-import org.openani.mediamp.PlaybackState
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -91,6 +98,18 @@ class EpisodeFetchSelectPlayState(
         suspend fun isFullscreen(): Boolean? = false
     }
 
+    private val selectorCacheRepo by koin.inject<SelectorMediaSourceEpisodeCacheRepository>()
+    private val mediaSourceManager by koin.inject<MediaSourceManager>()
+    private val playHistoryRepository by koin.inject<EpisodePlayHistoryRepository>()
+    private val automationGate by koin.inject<PlaybackAutomationGate>()
+
+    /**
+     * 条目级查询会话, 各集共用: 切集只重建选择器, 不重新查询.
+     */
+    private val fetchSessions = SubjectMediaFetchSessions(backgroundScope) { request ->
+        mediaSourceManager.createFetchFetchSession(flowOf(request))
+    }
+
     private val _episodeSessionFlow = MutableStateFlow(
         newEpisodeSession(initialEpisodeId),
     )
@@ -104,6 +123,7 @@ class EpisodeFetchSelectPlayState(
     val playerSession = PlayerSession(
         player,
         koin,
+        backgroundScope,
         mainDispatcher,
     )
 
@@ -163,7 +183,8 @@ class EpisodeFetchSelectPlayState(
                     // 2. 暂停播放, '冻结'播放器状态. 此时还不能 stop, 因为要调用扩展.
                     logger.info { "SwitchEpisode($episodeId): Pausing player" }
                     withContext(mainDispatcher) {
-                        if (player.playbackState.value == PlaybackState.PLAYING) {
+                        // 按播放意图判断: 缓冲中也应当暂停 (v1 只在 PLAYING 时暂停, 是个缺陷)
+                        if (player.state.value.playWhenReady) {
                             player.pause()
                         }
                     }
@@ -199,6 +220,7 @@ class EpisodeFetchSelectPlayState(
         koin,
         backgroundScope.coroutineContext,
         sharingStarted,
+        fetchSessions,
     )
 
     private val uiReady = CompletableDeferred<Unit>()
@@ -216,6 +238,11 @@ class EpisodeFetchSelectPlayState(
                 }
             }
         }
+
+        // 清除已过期的 web 源搜索缓存. 与启动查询无关 (读取本身就会过滤过期行), 因此不阻塞 session 启动.
+        backgroundScope.launch {
+            selectorCacheRepo.purgeExpired()
+        }
     }
 
     /**
@@ -224,6 +251,9 @@ class EpisodeFetchSelectPlayState(
     suspend fun onClose() {
         extensionManager.call { it.onClose() }
         playerSession.stopPlayback()
+        fetchSessions.close()
+        // 未过期的缓存会保留, 短暂退出后重进播放页仍可复用; 这里只是顺手回收已过期的行.
+        selectorCacheRepo.purgeExpired()
     }
 
     /**
@@ -304,12 +334,30 @@ class EpisodeFetchSelectPlayState(
                                     subjectId = infoBundle.subjectId,
                                     episodeId = infoBundle.episodeId,
                                 ),
+                                startPositionHintMillis(episodeInfo.episodeId),
                             )
                             onMediaLoaded(episodeInfo.episodeId)
                         }
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 续播的起点, 供 HLS 代理在起播前预缓存那里的分片 (见 [HlsPlaybackPreparer.prepare]).
+     * 跳转仍由 RememberPlayProgressExtension 在播放开始后执行, 这里与它读同一份进度; 一起看时它不续播, 这里也不给.
+     * 读取失败只是少了预缓存, 不影响加载.
+     */
+    private suspend fun startPositionHintMillis(episodeId: Int): Long? {
+        if (automationGate.suppressed.value) return null
+        return try {
+            playHistoryRepository.getResumePositionMillisByEpisodeId(episodeId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to read play progress of episode $episodeId for HLS start position hint" }
+            null
         }
     }
 

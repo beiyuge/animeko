@@ -10,6 +10,7 @@
 package me.him188.ani.app.domain.player.extension
 
 import androidx.annotation.VisibleForTesting
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.collections.immutable.persistentHashSetOf
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -24,10 +25,11 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import me.him188.ani.app.domain.episode.EpisodeSession
 import me.him188.ani.app.domain.episode.MediaFetchSelectBundle
+import me.him188.ani.app.domain.media.DroppedFileMedia
 import me.him188.ani.app.domain.media.fetch.MediaFetchSession
+import me.him188.ani.app.domain.media.selector.MediaAutoSelector
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.MediaSelectorSourceTiers
-import me.him188.ani.app.domain.media.selector.autoSelect
 import me.him188.ani.app.domain.mediasource.GetMediaSelectorSourceTiersUseCase
 import me.him188.ani.app.domain.player.VideoLoadingState
 import me.him188.ani.app.domain.settings.GetMediaSelectorSettingsFlowUseCase
@@ -36,11 +38,13 @@ import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.logging.logger
 import org.koin.core.Koin
-import org.openani.mediamp.PlaybackState
-import kotlin.time.Duration.Companion.seconds
+import org.openani.mediamp.MediaStatus
+import org.openani.mediamp.PlayerState
 
 /**
  * 当播放失败时, 自动切换到下一个可选择的 media.
+ *
+ * 用户拖入的本地文件 ([DroppedFileMedia]) 播放失败时不切换, 保留报错.
  */
 class SwitchMediaOnPlayerErrorExtension(
     private val context: PlayerExtensionContext,
@@ -60,7 +64,7 @@ class SwitchMediaOnPlayerErrorExtension(
                 invoke(
                     session.fetchSelectFlow,
                     context.videoLoadingStateFlow,
-                    context.player.playbackState,
+                    context.player.state,
                 )
             }
         }
@@ -75,7 +79,7 @@ class SwitchMediaOnPlayerErrorExtension(
     private suspend fun invoke(
         mediaFetchSessionFlow: Flow<MediaFetchSelectBundle?>,
         videoLoadingStateFlow: Flow<VideoLoadingState>,
-        playbackStateFlow: Flow<PlaybackState>
+        playerStateFlow: Flow<PlayerState>
     ) {
         val handler = PlayerLoadErrorHandler(
             getPreferKind = { getMediaSelectorSettingsFlowUseCase().first().preferKind },
@@ -102,7 +106,7 @@ class SwitchMediaOnPlayerErrorExtension(
                         handler.observeLoadErrorAndHandle(
                             mediaFetchSessionFlow,
                             videoLoadingStateFlow,
-                            playbackStateFlow,
+                            playerStateFlow,
                         )
                     }
                 }
@@ -112,16 +116,16 @@ class SwitchMediaOnPlayerErrorExtension(
     private suspend fun PlayerLoadErrorHandler.observeLoadErrorAndHandle(
         mediaFetchSessionFlow: Flow<MediaFetchSelectBundle?>,
         videoLoadingStateFlow: Flow<VideoLoadingState>,
-        playbackStateFlow: Flow<PlaybackState>
+        playerStateFlow: Flow<PlayerState>
     ) {
         mediaFetchSessionFlow.collectLatest { bundle ->
             if (bundle == null) return@collectLatest
 
             combine(
                 videoLoadingStateFlow, // 解析链接出错 (未匹配到链接)
-                playbackStateFlow, // 解析成功, 但播放器出错 (无法链接到链接, 例如链接错误)
-            ) { videoLoadingState, playbackState ->
-                videoLoadingState is VideoLoadingState.Failed || playbackState == PlaybackState.ERROR
+                playerStateFlow, // 解析成功, 但播放器出错 (无法链接到链接, 例如链接错误)
+            ) { videoLoadingState, playerState ->
+                videoLoadingState is VideoLoadingState.Failed || playerState.mediaStatus is MediaStatus.Error
             }.distinctUntilChanged()
                 .collectLatest { isError ->
                     if (isError) {
@@ -160,15 +164,23 @@ internal class PlayerLoadErrorHandler(
         session: MediaFetchSession,
         mediaSelector: MediaSelector,
     ) {
+        val failedMedia = mediaSelector.selected.value
+        if (failedMedia != null && DroppedFileMedia.isDroppedFile(failedMedia)) {
+            // 用户拖入的本地文件: 用户明确要播放这个文件, 保留报错, 不替换为其他资源
+            logger.info { "Player errored on a dropped file, skip automatic switch" }
+            return
+        }
+
         // 播放出错了
         logger.info { "Player errored, automatically switching to next media" }
 
         // 将当前播放的 mediaId 加入黑名单
-        mediaSelector.selected.value?.let {
+        failedMedia?.let {
             blacklistedMediaIds = blacklistedMediaIds.add(it.mediaId) // thread-safe
         }
 
         delay(1.seconds) // 稍等让用户看到播放出错
+        if (mediaSelector.selected.value != failedMedia) return
 
         // Load data in parallel
         val (preferKind, sourceTiers) = combine(
@@ -181,13 +193,20 @@ internal class PlayerLoadErrorHandler(
             return
         }
 
-        val result = mediaSelector.autoSelect.fastSelectWebSources(
+        val result = MediaAutoSelector(mediaSelector).select(
             session,
-            sourceTiers = sourceTiers,
-            overrideUserSelection = true, // Note: 覆盖用户选择
-            blacklistMediaIds = blacklistedMediaIds,
-            // 错误切换不需要等太长时间.
-            lowTierToleranceDuration = 1.seconds,
+            MediaAutoSelector.Config(
+                selectCache = false,
+                blacklist = blacklistedMediaIds,
+                web = MediaAutoSelector.Web(
+                    sourceTiers = sourceTiers,
+                    // 错误切换不需要等太长时间。
+                    exactMatchAfter = 1.seconds,
+                    fuzzyMatchAfter = 1.seconds,
+                    waitForPendingSources = false,
+                ),
+            ),
+            expectedSelection = failedMedia,
         )
         logger.info { "Player errored, automatically switched to next media: $result" }
     }

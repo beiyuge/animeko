@@ -23,9 +23,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.models.UserInfo
+import me.him188.ani.app.data.models.comment.CommentVoteValue
 import me.him188.ani.app.data.models.episode.EpisodeComment
 import me.him188.ani.app.data.models.episode.EpisodeCommentSource
 import me.him188.ani.app.data.models.subject.SubjectReview
+import me.him188.ani.app.data.models.subject.SubjectReviewSource
 import me.him188.ani.app.data.network.BangumiCommentService
 import me.him188.ani.app.data.persistent.database.dao.SubjectReviewDao
 import me.him188.ani.app.data.persistent.database.entity.SubjectReviewEntity
@@ -36,18 +38,27 @@ class BangumiCommentRepository(
     private val commentService: BangumiCommentService,
     private val subjectReviewDao: SubjectReviewDao,
 ) : Repository() {
-    fun subjectCommentsPager(subjectId: Int): Flow<PagingData<SubjectReview>> {
+    fun subjectCommentsPager(subjectId: Int, onTotalCount: (Int?) -> Unit = {}): Flow<PagingData<SubjectReview>> {
         return Pager(
             config = defaultPagingConfig,
             initialKey = 0,
             pagingSourceFactory = {
-                SubjectReviewPagingSource(subjectId)
+                SubjectReviewPagingSource(subjectId, onTotalCount)
             },
         ).flow
     }
 
+    /**
+     * 对条目评价投票 (点赞/点踩). [vote] 为 `null` 表示取消投票.
+     * 只支持 [SubjectReviewSource.ANI] 来源的评价, [reviewId] 为服务端评价 ID.
+     */
+    suspend fun voteSubjectReview(subjectId: Int, reviewId: String, vote: CommentVoteValue?) {
+        commentService.voteSubjectReview(subjectId, reviewId, vote)
+    }
+
     private inner class SubjectReviewPagingSource(
         private val subjectId: Int,
+        private val onTotalCount: (Int?) -> Unit,
     ) : PagingSource<Int, SubjectReview>() {
         override fun getRefreshKey(state: PagingState<Int, SubjectReview>): Int? = state.anchorPosition
 
@@ -61,6 +72,9 @@ class BangumiCommentRepository(
                         nextKey = null,
                     )
 
+                // The merged review endpoint returns offset + page size + 1 while more pages exist.
+                // That sentinel is a lower bound, not an exact review count.
+                onTotalCount(subjectReviews.total.takeUnless { subjectReviews.hasMore })
                 LoadResult.Page(
                     data = subjectReviews.page,
                     prevKey = if (offset == 0) null else (offset - params.loadSize).coerceAtLeast(0),
@@ -123,6 +137,8 @@ private fun SubjectReview.toEntity(subjectId: Int): SubjectReviewEntity? {
 private fun SubjectReviewEntity.toInfo(): SubjectReview {
     return SubjectReview(
         id = packInts(subjectId, authorId),
+        reviewId = "",
+        source = SubjectReviewSource.BANGUMI,
         updatedAt = updatedAt,
         content = content,
         creator = UserInfo(

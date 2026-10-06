@@ -11,11 +11,14 @@ package me.him188.ani.app.data.network
 
 import me.him188.ani.app.domain.foundation.ServerListFeatureConfig
 import me.him188.ani.client.apis.BangumiAniApi
-import me.him188.ani.client.apis.BangumiOAuthAniApi
 import me.him188.ani.client.apis.CharactersAniApi
+import me.him188.ani.client.apis.CommentsAniApi
 import me.him188.ani.client.apis.DanmakuAniApi
+import me.him188.ani.client.apis.DeveloperVerificationAniApi
 import me.him188.ani.client.apis.EpisodesAniApi
 import me.him188.ani.client.apis.HomeAniApi
+import me.him188.ani.client.apis.OAuthAniApi
+import me.him188.ani.client.apis.QRLoginAniApi
 import me.him188.ani.client.apis.PeerFilterRuleAniApi
 import me.him188.ani.client.apis.PersonsAniApi
 import me.him188.ani.client.apis.PlaybackHistoryAniApi
@@ -38,12 +41,15 @@ class AniApiProvider(
 ) {
     val trendsApi = ApiInvoker(client) { TrendsAniApi(baseurl, it) }
     val scheduleApi = ApiInvoker(client) { ScheduleAniApi(baseurl, it) }
-    val oauthApi = ApiInvoker(client) { BangumiOAuthAniApi(baseurl, it) }
+    val oauthApi = ApiInvoker(client) { OAuthAniApi(baseurl, it) }
+    val qrLoginApi = ApiInvoker(client) { QRLoginAniApi(baseurl, it) }
+    val developerVerificationApi = ApiInvoker(client) { DeveloperVerificationAniApi(baseurl, it) }
     val homeApi = ApiInvoker(client) { HomeAniApi(baseurl, it) }
     val subjectRelationsApi = ApiInvoker(client) { SubjectRelationsAniApi(baseurl, it) }
     val danmakuApi = ApiInvoker(client) { DanmakuAniApi(baseurl, it) }
     val pfRuleApi = ApiInvoker(client) { PeerFilterRuleAniApi(baseurl, it) }
     val episodesApi = ApiInvoker(client) { EpisodesAniApi(baseurl, it) }
+    val commentsApi = ApiInvoker(client) { CommentsAniApi(baseurl, it) }
     val playbackHistoryApi = ApiInvoker(client) { PlaybackHistoryAniApi(baseurl, it) }
 
     val bangumiApi = ApiInvoker(client) { BangumiAniApi(baseurl, it) }

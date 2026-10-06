@@ -28,17 +28,22 @@ import androidx.media3.session.MediaSessionService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import me.him188.ani.app.platform.Context
+import me.him188.ani.app.videoplayer.media.LibassExoPlayerMediampPlayer
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.logging.warn
 import org.openani.mediamp.MediampPlayer
 import org.openani.mediamp.exoplayer.ExoPlayerMediampPlayer
 
+@OptIn(UnstableApi::class)
 actual fun createSystemMediaSessionRegistration(
     context: Context,
     player: MediampPlayer,
 ): SystemMediaSessionRegistration {
-    val exoPlayer = (player as? ExoPlayerMediampPlayer)?.impl
-        ?: return UnsupportedAndroidSystemMediaSessionRegistration
+    val exoPlayer = when (player) {
+        is LibassExoPlayerMediampPlayer -> player.exoPlayer
+        is ExoPlayerMediampPlayer -> player.impl
+        else -> return UnsupportedAndroidSystemMediaSessionRegistration
+    }
     return AndroidSystemMediaSessionRegistration(context.applicationContext, exoPlayer)
 }
 

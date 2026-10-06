@@ -27,20 +27,20 @@ jobs:
             runner: windows-2022
             platform: windows
             arch: x86_64
-            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz
-            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-windows-x64-b750.29.tar.gz.checksum
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-windows-x64-b1163.116.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-windows-x64-b1163.116.tar.gz.checksum
           - label: macOS Apple Silicon
             runner: macos-15
             platform: macos
             arch: aarch64
-            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz
-            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.8-osx-aarch64-b1038.68.tar.gz.checksum
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-osx-aarch64-b1163.116.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-osx-aarch64-b1163.116.tar.gz.checksum
           - label: Linux x86_64
             runner: ubuntu-24.04
             platform: linux
             arch: x86_64
-            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz
-            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.5-linux-x64-b750.29.tar.gz.checksum
+            jbr_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-linux-x64-b1163.116.tar.gz
+            jbr_checksum_url: https://cache-redirector.jetbrains.com/intellij-jbr/jbrsdk_jcef-21.0.11-linux-x64-b1163.116.tar.gz.checksum
 
     steps:
       - uses: actions/checkout@v4

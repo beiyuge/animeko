@@ -30,19 +30,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import me.him188.ani.app.data.models.danmaku.DanmakuFilterConfig
+import me.him188.ani.app.data.models.preference.BackgroundBehavior
 import me.him188.ani.app.data.models.preference.DesktopCloseBehavior
 import me.him188.ani.app.data.models.preference.EpisodeListProgressTheme
 import me.him188.ani.app.data.models.preference.FullscreenSwitchMode
 import me.him188.ani.app.data.models.preference.NsfwMode
+import me.him188.ani.app.data.models.preference.PlayerKernelConfig
 import me.him188.ani.app.data.models.preference.ThemeSettings
 import me.him188.ani.app.data.models.preference.UISettings
 import me.him188.ani.app.data.models.preference.UpdateSettings
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
+import me.him188.ani.app.data.models.preference.VideoEnhancementDefaultMode
 import me.him188.ani.app.data.models.preference.WatchTogetherSettings
 import me.him188.ani.app.data.network.protocol.ReleaseClass
 import me.him188.ani.app.navigation.MainScreenPage
@@ -61,6 +63,8 @@ import me.him188.ani.app.ui.lang.settings_app_close_behavior_minimize_to_tray
 import me.him188.ani.app.ui.lang.settings_app_episode_playback
 import me.him188.ani.app.ui.lang.settings_app_initial_page
 import me.him188.ani.app.ui.lang.settings_app_initial_page_description
+import me.him188.ani.app.ui.lang.settings_app_episode_images
+import me.him188.ani.app.ui.lang.settings_app_episode_images_description
 import me.him188.ani.app.ui.lang.settings_app_light_up_mode
 import me.him188.ani.app.ui.lang.settings_app_light_up_mode_description
 import me.him188.ani.app.ui.lang.settings_app_list_animation
@@ -72,7 +76,9 @@ import me.him188.ani.app.ui.lang.settings_app_nsfw_content
 import me.him188.ani.app.ui.lang.settings_app_nsfw_display
 import me.him188.ani.app.ui.lang.settings_app_nsfw_hide
 import me.him188.ani.app.ui.lang.settings_app_search
-import me.him188.ani.app.ui.lang.settings_app_language_system
+import me.him188.ani.app.ui.lang.settings_app_subject_title
+import me.him188.ani.app.ui.lang.settings_app_use_original_title
+import me.him188.ani.app.ui.lang.settings_app_use_original_title_description
 import me.him188.ani.app.ui.lang.settings_player
 import me.him188.ani.app.ui.lang.settings_player_audio_time_stretch
 import me.him188.ani.app.ui.lang.settings_player_audio_time_stretch_description
@@ -81,12 +87,17 @@ import me.him188.ani.app.ui.lang.settings_player_auto_mark_done
 import me.him188.ani.app.ui.lang.settings_player_auto_play_next
 import me.him188.ani.app.ui.lang.settings_player_auto_skip_op_ed
 import me.him188.ani.app.ui.lang.settings_player_auto_skip_op_ed_description
+import me.him188.ani.app.ui.lang.settings_player_background_behavior
+import me.him188.ani.app.ui.lang.settings_player_background_behavior_auto_pip
+import me.him188.ani.app.ui.lang.settings_player_background_behavior_background_playback
+import me.him188.ani.app.ui.lang.settings_player_background_behavior_description
+import me.him188.ani.app.ui.lang.settings_player_background_behavior_pause
 import me.him188.ani.app.ui.lang.settings_player_auto_switch_media_on_error
 import me.him188.ani.app.utils.formatSpeedValue
 import me.him188.ani.app.ui.lang.settings_player_default_playback_speed
 import me.him188.ani.app.ui.lang.settings_player_default_playback_speed_description
-import me.him188.ani.app.ui.lang.settings_player_experimental_hls_segment_filter
-import me.him188.ani.app.ui.lang.settings_player_experimental_hls_segment_filter_description
+import me.him188.ani.app.ui.lang.settings_player_hls_ad_filter
+import me.him188.ani.app.ui.lang.settings_player_hls_ad_filter_description
 import me.him188.ani.app.ui.lang.settings_player_enable_regex_filter
 import me.him188.ani.app.ui.lang.settings_player_frame_preview
 import me.him188.ani.app.ui.lang.settings_player_frame_preview_description
@@ -105,6 +116,11 @@ import me.him188.ani.app.ui.lang.settings_player_playback_speed_range
 import me.him188.ani.app.ui.lang.settings_player_playback_speed_range_description
 import me.him188.ani.app.ui.lang.settings_player_remember_playback_speed
 import me.him188.ani.app.ui.lang.settings_player_remember_playback_speed_description
+import me.him188.ani.app.ui.lang.settings_player_video_enhancement_default
+import me.him188.ani.app.ui.lang.settings_player_video_enhancement_default_description
+import me.him188.ani.app.ui.lang.video_player_off
+import me.him188.ani.app.ui.lang.video_player_performance
+import me.him188.ani.app.ui.lang.video_player_quality
 import me.him188.ani.app.ui.lang.settings_update_auto_check
 import me.him188.ani.app.ui.lang.settings_update_auto_check_description
 import me.him188.ani.app.ui.lang.settings_update_auto_download
@@ -177,6 +193,7 @@ fun AppSettingsTab(
     uiSettings: SettingsState<UISettings>,
     themeSettings: SettingsState<ThemeSettings>,
     videoScaffoldConfig: SettingsState<VideoScaffoldConfig>,
+    playerKernelConfig: SettingsState<PlayerKernelConfig>,
     watchTogetherSettings: SettingsState<WatchTogetherSettings>,
     danmakuFilterConfig: SettingsState<DanmakuFilterConfig>,
     danmakuRegexFilterState: DanmakuRegexFilterState,
@@ -189,6 +206,7 @@ fun AppSettingsTab(
         ThemeGroup(themeSettings)
         PlayerGroup(
             videoScaffoldConfig,
+            playerKernelConfig,
             danmakuFilterConfig,
             danmakuRegexFilterState,
             showDebug,
@@ -314,6 +332,29 @@ fun SettingsScope.AppearanceGroup(
             },
             title = { Text(stringResource(Lang.settings_app_light_up_mode)) },
             description = { Text(stringResource(Lang.settings_app_light_up_mode_description)) },
+        )
+        SwitchItem(
+            checked = episode.showEpisodeImages,
+            onCheckedChange = {
+                state.update(uiSettings.copy(episodeProgress = episode.copy(showEpisodeImages = it)))
+            },
+            title = { Text(stringResource(Lang.settings_app_episode_images)) },
+            description = { Text(stringResource(Lang.settings_app_episode_images_description)) },
+        )
+    }
+
+    Group(title = { Text(stringResource(Lang.settings_app_subject_title)) }, useThinHeader = true) {
+        SwitchItem(
+            checked = uiSettings.subjectAppearance.useOriginalTitle,
+            onCheckedChange = {
+                state.update(
+                    uiSettings.copy(
+                        subjectAppearance = uiSettings.subjectAppearance.copy(useOriginalTitle = it),
+                    ),
+                )
+            },
+            title = { Text(stringResource(Lang.settings_app_use_original_title)) },
+            description = { Text(stringResource(Lang.settings_app_use_original_title_description)) },
         )
     }
 }
@@ -457,6 +498,7 @@ fun SettingsScope.SoftwareUpdateGroup(
 @Composable
 fun SettingsScope.PlayerGroup(
     videoScaffoldConfig: SettingsState<VideoScaffoldConfig>,
+    playerKernelConfig: SettingsState<PlayerKernelConfig>,
     danmakuFilterConfig: SettingsState<DanmakuFilterConfig>,
     danmakuRegexFilterState: DanmakuRegexFilterState,
     showDebug: Boolean
@@ -480,6 +522,33 @@ fun SettingsScope.PlayerGroup(
             },
             title = { Text(stringResource(Lang.settings_player_fullscreen_button)) },
             description = { Text(stringResource(Lang.settings_player_fullscreen_button_description)) },
+        )
+        HorizontalDividerItem()
+        DropdownItem(
+            selected = { config.videoEnhancementDefaultMode },
+            values = {
+                listOf(
+                    VideoEnhancementDefaultMode.PERFORMANCE,
+                    VideoEnhancementDefaultMode.QUALITY,
+                    VideoEnhancementDefaultMode.OFF,
+                )
+            },
+            itemText = {
+                Text(
+                    when (it) {
+                        VideoEnhancementDefaultMode.OFF -> stringResource(Lang.video_player_off)
+                        VideoEnhancementDefaultMode.PERFORMANCE -> stringResource(Lang.video_player_performance)
+                        VideoEnhancementDefaultMode.QUALITY -> stringResource(Lang.video_player_quality)
+                    },
+                )
+            },
+            onSelect = {
+                videoScaffoldConfig.update(config.copy(videoEnhancementDefaultMode = it))
+            },
+            title = { Text(stringResource(Lang.settings_player_video_enhancement_default)) },
+            description = {
+                Text(stringResource(Lang.settings_player_video_enhancement_default_description))
+            },
         )
         HorizontalDividerItem()
         SwitchItem(
@@ -535,6 +604,38 @@ fun SettingsScope.PlayerGroup(
             },
             title = { Text(stringResource(Lang.settings_player_auto_play_next)) },
         )
+        if (LocalPlatform.current.isMobile()) {
+            HorizontalDividerItem()
+            DropdownItem(
+                selected = { config.backgroundBehavior },
+                // BACKGROUND_PLAYBACK 为二期后台播放预留, 暂不提供
+                values = {
+                    listOf(
+                        BackgroundBehavior.AUTO_PICTURE_IN_PICTURE,
+                        BackgroundBehavior.PAUSE,
+                    )
+                },
+                itemText = {
+                    Text(
+                        when (it) {
+                            BackgroundBehavior.AUTO_PICTURE_IN_PICTURE ->
+                                stringResource(Lang.settings_player_background_behavior_auto_pip)
+
+                            BackgroundBehavior.PAUSE ->
+                                stringResource(Lang.settings_player_background_behavior_pause)
+
+                            BackgroundBehavior.BACKGROUND_PLAYBACK ->
+                                stringResource(Lang.settings_player_background_behavior_background_playback)
+                        },
+                    )
+                },
+                onSelect = {
+                    videoScaffoldConfig.update(config.copy(backgroundBehavior = it))
+                },
+                title = { Text(stringResource(Lang.settings_player_background_behavior)) },
+                description = { Text(stringResource(Lang.settings_player_background_behavior_description)) },
+            )
+        }
         HorizontalDividerItem()
         SwitchItem(
             checked = config.autoSkipOpEd,
@@ -576,17 +677,14 @@ fun SettingsScope.PlayerGroup(
             )
         }
         HorizontalDividerItem()
-        if (!LocalPlatform.current.isIos()) {
-            SwitchItem(
-                checked = config.enableExperimentalHlsSegmentFiltering,
-                onCheckedChange = {
-                    videoScaffoldConfig.update(config.copy(enableExperimentalHlsSegmentFiltering = it))
-                },
-                title = { Text(stringResource(Lang.settings_player_experimental_hls_segment_filter)) },
-                description = { Text(stringResource(Lang.settings_player_experimental_hls_segment_filter_description)) },
-            )
-            HorizontalDividerItem()
-        }
+        SwitchItem(
+            checked = config.enableHlsAdFiltering,
+            onCheckedChange = {
+                videoScaffoldConfig.update(config.copy(enableHlsAdFiltering = it))
+            },
+            title = { Text(stringResource(Lang.settings_player_hls_ad_filter)) },
+            description = { Text(stringResource(Lang.settings_player_hls_ad_filter_description)) },
+        )
         HorizontalDividerItem()
         SwitchItem(
             checked = config.enableFramePreview,
@@ -598,7 +696,7 @@ fun SettingsScope.PlayerGroup(
         )
         HorizontalDividerItem()
         PlaybackSpeedItems(config, videoScaffoldConfig)
-        PlayerGroupPlatform(videoScaffoldConfig)
+        PlayerGroupPlatform(videoScaffoldConfig, playerKernelConfig)
     }
 }
 
@@ -766,27 +864,8 @@ private fun DesktopCloseBehavior.renderText(): String {
 @Composable
 internal expect fun SettingsScope.PlayerGroupPlatform(
     videoScaffoldConfig: SettingsState<VideoScaffoldConfig>,
+    playerKernelConfig: SettingsState<PlayerKernelConfig>,
 )
-
-@Composable
-internal fun renderLocale(it: Locale?): String {
-    if (it == null) {
-        return stringResource(Lang.settings_app_language_system)
-    }
-
-    // The following code does not need to be localized
-    return when (it.language) {
-        "en", "eng" -> "English"
-        "zh", "chi", "zho" -> when (it.region) {
-            "CN" -> "简体中文"
-            "HK" -> "繁體中文(香港)"
-            "TW" -> "正體中文"
-            else -> "繁體中文"
-        }
-
-        else -> """${it.language}-${it.region}"""
-    }
-}
 
 @OptIn(TestOnly::class)
 @Preview
@@ -797,6 +876,7 @@ private fun PreviewAppSettingsTab() {
         uiSettings = rememberTestSettingsState(UISettings.Default),
         themeSettings = rememberTestSettingsState(ThemeSettings.Default),
         videoScaffoldConfig = rememberTestSettingsState(VideoScaffoldConfig.Default),
+        playerKernelConfig = rememberTestSettingsState(PlayerKernelConfig.Default),
         watchTogetherSettings = rememberTestSettingsState(WatchTogetherSettings.Default),
         danmakuFilterConfig = rememberTestSettingsState(DanmakuFilterConfig.Default),
         danmakuRegexFilterState = createTestDanmakuRegexFilterState(),

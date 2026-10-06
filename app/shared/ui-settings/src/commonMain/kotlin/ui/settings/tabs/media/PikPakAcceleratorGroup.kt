@@ -9,23 +9,30 @@
 
 package me.him188.ani.app.ui.settings.tabs.media
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import kotlinx.coroutines.launch
 import me.him188.ani.app.data.models.preference.MediaSelectorSettings
 import me.him188.ani.app.data.models.preference.PikPakConfig
 import me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility
 import me.him188.ani.app.ui.lang.Lang
 import me.him188.ani.app.ui.lang.settings_pikpak_description
+import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_failed
+import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_idle
+import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_signed_out
+import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_title
+import me.him188.ani.app.ui.lang.settings_pikpak_drive_usage_value
 import me.him188.ani.app.ui.lang.settings_pikpak_enabled
 import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent
 import me.him188.ani.app.ui.lang.settings_pikpak_prevent_anitorrent_description
@@ -38,10 +45,8 @@ import me.him188.ani.app.ui.lang.settings_pikpak_recommend_apply
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_dismiss
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_message
 import me.him188.ani.app.ui.lang.settings_pikpak_recommend_title
-import me.him188.ani.app.ui.lang.settings_pikpak_test_connection
 import me.him188.ani.app.ui.lang.settings_pikpak_username
 import me.him188.ani.app.ui.lang.settings_pikpak_username_placeholder
-import me.him188.ani.app.ui.settings.framework.ConnectionTester
 import me.him188.ani.app.ui.settings.framework.ConnectionTesterResultIndicator
 import me.him188.ani.app.ui.settings.framework.SettingsState
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
@@ -55,12 +60,14 @@ import org.jetbrains.compose.resources.stringResource
 internal fun SettingsScope.PikPakAcceleratorGroup(
     state: SettingsState<PikPakConfig>,
     mediaSelectorSettings: SettingsState<MediaSelectorSettings>,
-    connectionTester: ConnectionTester,
+    driveUsageState: PikPakDriveUsageState,
 ) {
     val config by state
     var showRecommendDialog by remember { mutableStateOf(false) }
     var showPreventAnitorrentDialog by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+
+    // The numbers shown belong to the account they were read for
+    LaunchedEffect(config.username) { driveUsageState.reset() }
 
     Group(
         title = { Text("PikPak") },
@@ -110,6 +117,8 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
                                     username = newUsername,
                                     password = "",
                                     refreshToken = "",
+                                    // The answer was about the previous account's folder
+                                    legacyNoticeAnswered = false,
                                 ),
                             )
                         }
@@ -156,15 +165,7 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
                     },
                 )
 
-                TextItem(
-                    title = { Text(stringResource(Lang.settings_pikpak_test_connection)) },
-                    action = {
-                        ConnectionTesterResultIndicator(connectionTester, showTime = true)
-                    },
-                    onClick = {
-                        scope.launch { connectionTester.test() }
-                    },
-                )
+                PikPakDriveUsageItems(driveUsageState)
             }
         }
     }
@@ -214,6 +215,39 @@ internal fun SettingsScope.PikPakAcceleratorGroup(
             },
         )
     }
+
+
+}
+
+@Composable
+private fun SettingsScope.PikPakDriveUsageItems(
+    state: PikPakDriveUsageState,
+) {
+    TextItem(
+        modifier = Modifier.clickable(onClick = { state.check() }),
+        title = { Text(stringResource(Lang.settings_pikpak_drive_usage_title)) },
+        description = {
+            when (val presentation = state.presentation) {
+                PikPakDriveUsagePresentation.Idle ->
+                    Text(stringResource(Lang.settings_pikpak_drive_usage_idle))
+
+                PikPakDriveUsagePresentation.SignedOut ->
+                    Text(stringResource(Lang.settings_pikpak_drive_usage_signed_out))
+
+                is PikPakDriveUsagePresentation.Failed ->
+                    Text(
+                        stringResource(Lang.settings_pikpak_drive_usage_failed, presentation.message),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+
+                is PikPakDriveUsagePresentation.Loaded ->
+                    Text(stringResource(Lang.settings_pikpak_drive_usage_value, presentation.free.toString()))
+            }
+        },
+        action = {
+            ConnectionTesterResultIndicator(state.tester, showTime = true, showIdle = false)
+        },
+    )
 }
 
 private fun isSelectorAlignedForCloudOffline(s: MediaSelectorSettings): Boolean =

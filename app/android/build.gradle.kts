@@ -9,21 +9,11 @@
 
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
-/*
- * Copyright (C) 2024-2025 OpenAni and contributors.
- *
- * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
- *
- * https://github.com/open-ani/ani/blob/main/LICENSE
- */
-
 plugins {
+    id("ani.android-application")
     alias(libs.plugins.jetbrains.compose)
-    alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.plugin.compose)
     alias(libs.plugins.kotlinx.atomicfu)
-    id("kotlin-parcelize")
     alias(libs.plugins.google.gms.google.services)
     idea
 }
@@ -118,6 +108,12 @@ android {
         create("default") {
             dimension = "distribution"
         }
+        create("tv") {
+            // Android TV 形态: 与 default 平级、单维度,
+            // 保证手机任务名 assembleDefaultRelease 与产物路径零变化.
+            dimension = "distribution"
+            applicationIdSuffix = ".tv"
+        }
     }
     buildFeatures {
         compose = true
@@ -126,9 +122,11 @@ android {
 }
 
 dependencies {
+    // 两个 flavor 共用共享库；TV 对手机页面的访问边界靠约定 + Konsist 维护。
     implementation(projects.app.shared)
     implementation(projects.app.shared.application)
     implementation(projects.torrent.pikpak)
+    "tvImplementation"(projects.app.shared.tv)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
@@ -154,4 +152,25 @@ googleServices {
         .let {
             if (it) MissingGoogleServicesStrategy.ERROR else MissingGoogleServicesStrategy.IGNORE
         }
+}
+
+// tv flavor 不接入 Firebase: google-services.json 只含手机包名, 禁用 tv variant 的
+// GoogleServices 任务以避免 "No matching client found" 失败.
+tasks.configureEach {
+    if (name.startsWith("processTv") && name.endsWith("GoogleServices")) {
+        enabled = false
+    }
+}
+
+// 同时从 tv variant 的依赖闭包剔除 Firebase/GMS (经 :utils:analytics api 传递进来):
+// TV 端 Analytics 永不初始化, 剔除后 manifest 不再混入 AD_ID/AdServices 权限与 measurement 服务.
+configurations.configureEach {
+    if (name.startsWith("tv") && name.endsWith("Classpath")) {
+        exclude(group = "dev.gitlive", module = "firebase-analytics")
+        exclude(group = "dev.gitlive", module = "firebase-analytics-android")
+        exclude(group = "dev.gitlive", module = "firebase-app")
+        exclude(group = "dev.gitlive", module = "firebase-app-android")
+        exclude(group = "com.google.firebase")
+        exclude(group = "com.google.android.gms")
+    }
 }

@@ -51,13 +51,14 @@ data class PikPakConfig(
     val password: String = "",
     @Serializable(with = ObscuredStringSerializer::class)
     val refreshToken: String = "",
-    /** Legacy compatibility field. Successful resources are no longer evicted automatically. */
     @Deprecated("PikPak library storage is unlimited")
     val slotQueueLength: Int = 1,
+    val legacyNoticeAnswered: Boolean = false,
 ) {
     override fun toString(): String {
-        return "PikPakConfig(enabled=$enabled, preventAnitorrentStart=$preventAnitorrentStart, username=$username, password.hash=${password.hashCode()}, " +
-                "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }})"
+        return "PikPakConfig(enabled=$enabled, username=$username, password.hash=${password.hashCode()}, " +
+                "refreshToken.hash=${refreshToken.let { if (it.isNotEmpty()) it.hashCode() else "" }}, " +
+                "legacyNoticeAnswered=$legacyNoticeAnswered)"
     }
 
     companion object {

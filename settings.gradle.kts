@@ -9,18 +9,12 @@
 
 import java.util.Properties
 
-/*
- * Copyright (C) 2024 OpenAni and contributors.
- *
- * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
- *
- * https://github.com/open-ani/ani/blob/main/LICENSE
- */
-
 rootProject.name = "animeko"
 
 pluginManagement {
+    // 约定插件来自 build-logic; 必须在 settings 里 includeBuild, plugins {} 才解析得到 `ani.*`.
+    includeBuild("build-logic")
+
     repositories {
         gradlePluginPortal()
         mavenCentral()
@@ -32,22 +26,26 @@ pluginManagement {
 apply(from = "gradle/anitorrent-ghcr.settings.gradle.kts")
 
 dependencyResolutionManagement {
+    // 仓库策略属于 settings; FAIL_ON_PROJECT_REPOS 防止子项目再自己加仓库.
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
     @Suppress("UnstableApiUsage")
     repositories {
         maven {
             url = uri(extra["anitorrentGhcrMavenRepository"]!!)
         }
-        mavenLocal()
+        // mavenLocal 的位置不能动: 本地 mediamp / anitorrent 调试构建依赖它排在这里.
         mavenCentral()
+        google()
+        mavenLocal()
+        maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
+        maven("https://androidx.dev/storage/compose-compiler/repository/")
+        maven("https://jogamp.org/deployment/maven")
     }
     versionCatalogs {
         create("anitorrentLibs") {
             from("io.github.beiyuge.anitorrent:catalog:0.2.1-beiyuge.1")
         }
 
-        create("mediampLibs") {
-            from("org.openani.mediamp:catalog:0.0.30")
-        }
     }
 }
 
@@ -91,6 +89,9 @@ includeProject(":utils:ui-preview")
 includeProject(":utils:analytics")
 includeProject(":utils:http-downloader")
 includeProject(":utils:build-config")
+includeProject(":utils:video-enhancement-shader-provider")
+includeProject(":utils:selector-workflow") // 数据源选择流程示意动画的数据层
+includeProject(":utils:macos-share") // macOS 系统分享菜单的 JNI 实现, 见其 build.gradle.kts
 
 
 includeProject(":torrent:torrent-api", "torrent/api") // Torrent 系统 API
@@ -99,22 +100,31 @@ includeProject(":torrent:anitorrent")
 includeProject(":torrent:pikpak") // PikPak 云离线下载后端
 
 includeProject(":app:shared")
+// TV child modules compile their parent's src/androidTv directories and depend on the shared KMP modules.
+includeProject(":app:shared:tv", "app/shared/shared-tv")
 includeProject(":app:shared:app-platform")
 includeProject(":app:shared:app-data")
 includeProject(":app:shared:app-data-aidl")
 includeProject(":app:shared:app-lang") // We have a separate module so that the project compiles faster
 includeProject(":app:shared:ui-foundation")
+includeProject(":app:shared:ui-foundation-tv", "app/shared/ui-foundation/tv")
 includeProject(":app:shared:ui-settings")
+includeProject(":app:shared:ui-settings-tv", "app/shared/ui-settings/tv")
 includeProject(":app:shared:ui-adaptive")
 includeProject(":app:shared:ui-subject")
-includeProject(":app:shared:ui-cache")
+includeProject(":app:shared:ui-subject-tv", "app/shared/ui-subject/tv")
+includeProject(":app:shared:ui-download")
 includeProject(":app:shared:ui-exploration")
+includeProject(":app:shared:ui-exploration-tv", "app/shared/ui-exploration/tv")
 includeProject(":app:shared:ui-comment")
 includeProject(":app:shared:ui-onboarding")
+includeProject(":app:shared:ui-onboarding-tv", "app/shared/ui-onboarding/tv")
 includeProject(":app:shared:ui-mediaselect")
 includeProject(":app:shared:ui-episode")
+includeProject(":app:shared:ui-episode-tv", "app/shared/ui-episode/tv")
 includeProject(":app:shared:ui-exprovider")
 includeProject(":app:shared:ui-watchtogether")
+includeProject(":app:shared:ui-watchtogether-tv", "app/shared/ui-watchtogether/tv")
 includeProject(":app:shared:video-player:video-player-api", "app/shared/video-player/api")
 includeProject(":app:shared:video-player:torrent-source")
 includeProject(":app:shared:video-player")
@@ -122,7 +132,6 @@ includeProject(":app:shared:application")
 
 includeProject(":app:shared:placeholder", "app/shared/thirdparty/placeholder")
 includeProject(":app:shared:paging-compose", "app/shared/thirdparty/paging-compose")
-includeProject(":app:shared:image-viewer", "app/shared/thirdparty/image-viewer")
 includeProject(":app:shared:reorderable", "app/shared/thirdparty/reorderable")
 
 includeProject(":app:desktop", "app/desktop") // desktop JVM client for macOS, Windows, and Linux
@@ -165,25 +174,21 @@ includeProject(
 
 // ci
 includeProject(":ci-helper", "ci-helper") // 
-includeProject(":ci-helper:sqlite-woa64", "ci-helper/sqlite-woa64") // Windows ARM64 SQLite natives, see its build.gradle.kts
+includeProject(
+    ":ci-helper:sqlite-woa64",
+    "ci-helper/sqlite-woa64",
+) // Windows ARM64 SQLite natives, see its build.gradle.kts
 includeProject(":tools:datasource-test-mcp", "tools/datasource-test-mcp")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 
-val localPropertiesFile: File get() = rootProject.projectDir.resolve("local.properties")
-fun findLocalProperty(key: String): String? {
-    return if (localPropertiesFile.exists()) {
-        val properties = Properties()
-        localPropertiesFile.inputStream().buffered().use { input ->
-            properties.load(input)
-        }
-        properties.getProperty(key)
-    } else {
-        localPropertiesFile.createNewFile()
-        null
-    }
-}
+// settings 先于 build-logic 构建, 拿不到 LocalPropertiesValueSource, 这里单独实现一份.
+val localProperties: Provider<Properties> =
+    providers.fileContents(layout.settingsDirectory.file("local.properties")).asText
+        .map { text -> Properties().apply { text.reader().use { load(it) } } }
+
+fun findLocalProperty(key: String): String? = localProperties.orNull?.getProperty(key)
 
 findLocalProperty("ani.build.mediamp.path")?.let { mediampPath ->
     println("i:: Including mediamp as a Composite Build from: $mediampPath")
@@ -193,8 +198,6 @@ findLocalProperty("ani.build.mediamp.path")?.let { mediampPath ->
                 .using(project(":mediamp-api"))
             substitute(module("org.openani.mediamp:mediamp-exoplayer"))
                 .using(project(":mediamp-exoplayer"))
-            substitute(module("org.openani.mediamp:mediamp-vlc"))
-                .using(project(":mediamp-vlc"))
             substitute(module("org.openani.mediamp:mediamp-mpv"))
                 .using(project(":mediamp-mpv"))
             /*substitute(module("org.openani.mediamp:mediamp-ffmpeg"))

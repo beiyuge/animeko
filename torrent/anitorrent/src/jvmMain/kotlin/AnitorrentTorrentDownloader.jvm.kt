@@ -80,7 +80,9 @@ internal actual fun createAnitorrentTorrentDownloader(
         native = SwigTorrentManagerSession(session),
         httpFileDownloader = httpFileDownloader,
         parentCoroutineContext = parentCoroutineContext,
-    )
+    ).apply {
+        extraTrackers = torrentDownloaderConfig.extraTrackers
+    }
 }
 
 

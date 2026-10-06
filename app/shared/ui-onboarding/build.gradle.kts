@@ -8,17 +8,12 @@
  */
 
 plugins {
-    alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.kotlin.multiplatform.library)
-    alias(libs.plugins.kotlin.plugin.compose)
-    alias(libs.plugins.jetbrains.compose)
-
-    `ani-mpp-lib-targets`
+    id("ani.kmp-compose")
     alias(libs.plugins.kotlin.plugin.serialization)
 }
 
 kotlin {
-    androidLibrary {
+    android {
         namespace = "me.him188.ani.app.ui.onboarding"
     }
     sourceSets.commonMain.dependencies {
@@ -29,7 +24,17 @@ kotlin {
         implementation(libs.compose.components.resources)
         implementation(projects.utils.logging)
     }
+    sourceSets.commonTest.dependencies {
+        implementation(libs.kotlinx.coroutines.test)
+        implementation(projects.utils.uiTesting)
+    }
     sourceSets.androidMain.dependencies {
+        // 扫码登录的相机预览与二维码识别
+        implementation(libs.androidx.camera.camera2)
+        implementation(libs.androidx.camera.lifecycle)
+        implementation(libs.androidx.camera.view)
+        implementation(libs.zxing.core)
+        implementation(libs.androidx.activity.compose)
     }
     sourceSets.desktopMain.dependencies {
     }

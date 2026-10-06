@@ -14,7 +14,7 @@ import org.gradle.api.tasks.bundling.Zip
 import java.io.File
 
 plugins {
-    alias(libs.plugins.kotlin.jvm)
+    id("ani.jvm-library")
     alias(libs.plugins.kotlinx.atomicfu)
 }
 
@@ -57,6 +57,12 @@ fun ReleaseUploadTask.configureReleaseUploadInputs() {
 tasks.register("uploadAndroidApk", UploadAndroidApksTask::class) {
     configureReleaseUploadInputs()
     apkDirectory.set(project(":app:android").layout.buildDirectory.dir("outputs/apk/default/release"))
+}
+
+tasks.register("uploadAndroidTvApk", UploadAndroidApksTask::class) {
+    configureReleaseUploadInputs()
+    apkDirectory.set(project(":app:android").layout.buildDirectory.dir("outputs/apk/tv/release"))
+    flavor.set("tv") // 资产命名 ani-tv-<ver>-<arch>.apk
 }
 
 val uploadAndroidApkGithubQr = tasks.register("uploadAndroidApkGithubQr", UploadReleaseAssetTask::class) {
@@ -277,13 +283,15 @@ tasks.register("updateDevVersionNameFromGit") {
 tasks.register("updateReleaseVersionNameFromGit") {
     doLast {
         val releaseVersion = ReleaseArtifactNames.fullVersionFromTag(ciTag.get())
-        val releaseVersionCode = ReleaseArtifactNames.versionCodeFromTag(ciTag.get())
+        val iosBundleVersion = ReleaseArtifactNames.iosBundleVersionFromTag(ciTag.get())
+        val packageVersion = releaseVersion.substringBefore("-")
         val propertiesText = gradleProperties.readText()
-        println("New version: $releaseVersion($releaseVersionCode)")
+        println("New version: $releaseVersion, iosBundleVersion=$iosBundleVersion, packageVersion=$packageVersion")
         gradleProperties.writeText(
             propertiesText
                 .replaceFirst(Regex("version.name=(.+)"), "version.name=$releaseVersion")
-                .replaceFirst(Regex("ios.version.code=(.+)"), "ios.version.code=$releaseVersionCode"),
+                .replaceFirst(Regex("ios.version.code=(.+)"), "ios.version.code=$iosBundleVersion")
+                .replaceFirst(Regex("package.version=(.+)"), "package.version=$packageVersion"),
             // 不要更新 version.code, 这是为了让更新到测试版出 bug 的人可以回退到旧版
         )
     }

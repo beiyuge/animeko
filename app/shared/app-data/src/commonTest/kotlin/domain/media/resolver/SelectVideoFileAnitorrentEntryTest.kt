@@ -410,4 +410,42 @@ class SelectVideoFileAnitorrentEntryTest {
             selected,
         )
     }
+
+    @Test
+    fun `an incomplete listing does not fall back to the only video`() {
+        val selected = TorrentMediaResolver.selectVideoFileEntry(
+            listOf("[Sub] Season Pack - 01 [1080p].mkv"),
+            { this },
+            episodeTitles = listOf("第四集"),
+            episodeSort = EpisodeSort(4),
+            episodeEp = EpisodeSort(4),
+            listingComplete = false,
+        )
+        assertNull(selected)
+    }
+
+    @Test
+    fun `a complete listing still falls back to the only video`() {
+        val selected = TorrentMediaResolver.selectVideoFileEntry(
+            listOf("[Sub] Season Pack - 01 [1080p].mkv"),
+            { this },
+            episodeTitles = listOf("第四集"),
+            episodeSort = EpisodeSort(4),
+            episodeEp = EpisodeSort(4),
+        )
+        assertEquals("[Sub] Season Pack - 01 [1080p].mkv", selected)
+    }
+
+    @Test
+    fun `an incomplete listing still matches by episode number`() {
+        val selected = TorrentMediaResolver.selectVideoFileEntry(
+            listOf("[Sub] Season Pack - 04 [1080p].mkv"),
+            { this },
+            episodeTitles = listOf("第四集"),
+            episodeSort = EpisodeSort(4),
+            episodeEp = EpisodeSort(4),
+            listingComplete = false,
+        )
+        assertEquals("[Sub] Season Pack - 04 [1080p].mkv", selected)
+    }
 }

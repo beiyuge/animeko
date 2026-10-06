@@ -9,13 +9,16 @@
 
 package me.him188.ani.app.ui.watchtogether
 
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.receiveAsFlow
 import me.him188.ani.app.data.network.WatchTogetherJoinException
 import me.him188.ani.app.data.network.WatchTogetherJoinFailure
 import me.him188.ani.app.data.repository.user.SettingsRepository
@@ -27,16 +30,13 @@ import me.him188.ani.app.domain.watchtogether.WatchTogetherConnectionState
 import me.him188.ani.app.domain.watchtogether.WatchTogetherEffect
 import me.him188.ani.app.domain.watchtogether.WatchTogetherManager
 import me.him188.ani.app.domain.watchtogether.WatchTogetherState
-import me.him188.ani.app.domain.watchtogether.positionAt
 import me.him188.ani.app.ui.foundation.AbstractViewModel
 import me.him188.ani.app.ui.foundation.launchInBackground
 import me.him188.ani.app.ui.user.SelfInfoStateProducer
-import me.him188.ani.client.models.AniWatchTogetherMemberState
-import me.him188.ani.client.models.AniWatchTogetherWatchingInfo
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
-class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
+open class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
     private val manager: WatchTogetherManager by inject()
     private val settingsRepository: SettingsRepository by inject()
     private val sessionStateProvider: SessionStateProvider by inject()
@@ -44,6 +44,9 @@ class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
     private val selfInfoProducer = SelfInfoStateProducer(koin = getKoin())
 
     private val joinError = MutableStateFlow<String?>(null)
+    private val dialogOpenRequestChannel = Channel<Unit>(Channel.BUFFERED)
+
+    internal val dialogOpenRequests: Flow<Unit> = dialogOpenRequestChannel.receiveAsFlow()
 
     private val roomProjection = manager.state.flatMapLatest { state ->
         when (state) {
@@ -110,6 +113,16 @@ class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
         }
     }
 
+    fun onPlayerEntryClick() {
+        launchInBackground {
+            val settings = settingsRepository.watchTogetherSettings.flow.first()
+            if (!settings.enabled) {
+                settingsRepository.watchTogetherSettings.update { copy(enabled = true) }
+            }
+            dialogOpenRequestChannel.send(Unit)
+        }
+    }
+
     fun onAppForegroundChanged(foreground: Boolean) {
         manager.setAppForeground(foreground)
     }
@@ -130,26 +143,11 @@ class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
             room = WatchTogetherRoomCardState(
                 roomName = roomName,
                 connection = connection.toPresentation(),
-                playback = snapshot.playback?.info?.toPresentation(now),
+                playback = snapshot.playback?.info?.toWatchTogetherPlaybackPresentation(now),
                 members = snapshot.members
                     .sortedWith(compareByDescending { it.isHost })
                     .map { member ->
-                        val state = member.state.toPresentation()
-                        WatchTogetherMemberPresentation(
-                            userId = member.userId,
-                            nickname = member.nickname,
-                            avatarUrl = member.avatarUrl,
-                            isHost = member.isHost,
-                            isSelf = member.userId == selfUserId,
-                            following = member.following,
-                            state = state,
-                            watching = member.watching?.toPresentation(now),
-                            disconnectedMinutes = if (state == WatchTogetherMemberPresence.DISCONNECTED) {
-                                ((now - member.lastSeenAt) / 60_000L).coerceAtLeast(0L)
-                            } else {
-                                null
-                            },
-                        )
+                        member.toWatchTogetherMemberPresentation(now, selfUserId)
                     },
             ),
         )
@@ -162,28 +160,10 @@ class WatchTogetherViewModel : AbstractViewModel(), KoinComponent {
         }
     }
 
-    private fun AniWatchTogetherWatchingInfo.toPresentation(nowMillis: Long) =
-        WatchTogetherPlaybackPresentation(
-            subjectName = subjectName,
-            episodeSort = episodeSort,
-            episodeName = episodeName,
-            positionMillis = positionAt(nowMillis),
-            durationMillis = durationMillis,
-            paused = paused,
-            buffering = buffering == true,
-            loading = loading == true,
-        )
-
     private fun WatchTogetherConnectionState.toPresentation(): WatchTogetherConnectionPresentation = when (this) {
         WatchTogetherConnectionState.ConnectedSse -> WatchTogetherConnectionPresentation.CONNECTED
         WatchTogetherConnectionState.Reconnecting -> WatchTogetherConnectionPresentation.RECONNECTING
         WatchTogetherConnectionState.DegradedPolling -> WatchTogetherConnectionPresentation.DEGRADED
-    }
-
-    private fun AniWatchTogetherMemberState.toPresentation(): WatchTogetherMemberPresence = when (this) {
-        AniWatchTogetherMemberState.IDLE -> WatchTogetherMemberPresence.IDLE
-        AniWatchTogetherMemberState.WATCHING -> WatchTogetherMemberPresence.WATCHING
-        AniWatchTogetherMemberState.DISCONNECTED -> WatchTogetherMemberPresence.DISCONNECTED
     }
 
     private data class RoomProjection(

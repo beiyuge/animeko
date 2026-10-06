@@ -9,27 +9,13 @@
 
 import com.android.build.gradle.ProguardFiles.getDefaultProguardFile
 
-/*
- * Copyright (C) 2024-2026 OpenAni and contributors.
- *
- * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
- *
- * https://github.com/open-ani/ani/blob/main/LICENSE
- */
-
 plugins {
-    alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.kotlin.multiplatform.library)
-    alias(libs.plugins.kotlin.plugin.compose)
-    alias(libs.plugins.jetbrains.compose)
-
-    `ani-mpp-lib-targets`
+    id("ani.kmp-compose")
     alias(libs.plugins.kotlin.plugin.serialization)
 
     // alias(libs.plugins.kotlinx.atomicfu)
     idea
-    `build-config`
+    id("ani.build-config")
 }
 
 val aniAuthServerUrlDebug =
@@ -43,8 +29,11 @@ val overrideAniApiServer = getPropertyOrNull("ani.api.server")?.takeIf { it.isNo
 
 val distroChannel = getPropertyOrNull("ani.distro.channel") ?: "default"
 
+// 构建时的 git 分支 / commit, 在 "关于 > 构建信息" 里展示. 见 build-logic 的 git.kt.
+val currentGitInfo = gitInfo.get()
+
 kotlin {
-    androidLibrary {
+    android {
         namespace = "me.him188.ani.app.platform"
         // TODO AGP Migration: Test package optimization
         optimization {
@@ -64,16 +53,13 @@ kotlin {
         api(libs.kotlinx.coroutines.core)
         api(projects.danmaku.danmakuApi)
         api(libs.kotlinx.collections.immutable)
-        api(projects.app.shared.imageViewer)
-
-        api(libs.coil.compose.core)
-        api(libs.coil.svg)
-        api(libs.coil.network.ktor3)
 
         api(libs.compose.lifecycle.viewmodel.compose)
         api(libs.compose.lifecycle.runtime.compose)
         api(libs.compose.navigation.compose)
         api(libs.compose.navigation.runtime)
+        api(libs.compose.navigation3.runtime)
+        api(libs.kotlinx.serialization.json)
         api(libs.compose.material3.adaptive.core)
         api(libs.compose.material3.adaptive.layout)
         api(libs.compose.material3.adaptive.navigation0)
@@ -89,6 +75,8 @@ kotlin {
         api(projects.utils.buildConfig)
     }
     sourceSets.desktopMain.dependencies {
+        implementation(projects.utils.coroutines)
+        implementation(projects.utils.macosShare)
         api(libs.jna)
         api(libs.jna.platform)
     }
@@ -110,7 +98,7 @@ buildConfig {
     outputDir.set(layout.buildDirectory.dir("generated/buildconfig"))
 
     // Desktop platform configuration
-    fun Build_config_gradle.BuildConfigPlatform.firebaseFields() {
+    fun BuildConfigPlatform.firebaseFields() {
         fun getProp(name: String): String {
             return if (enableFirebase) {
                 getProperty(name).also {
@@ -132,6 +120,12 @@ buildConfig {
         booleanField("analyticsEnabled", enableFirebase)
     }
 
+    fun BuildConfigPlatform.gitFields() {
+        stringField("gitBranch", currentGitInfo.branch)
+        stringField("gitCommitSha", currentGitInfo.commitSha)
+        stringField("gitCommitTime", currentGitInfo.commitTime)
+    }
+
     platform("desktop") {
         stringField("versionName", project.version.toString())
         expressionField(
@@ -143,6 +137,7 @@ buildConfig {
         stringField("sentryDsn", sentryDsn)
         stringField("overrideAniApiServer", overrideAniApiServer ?: "")
         stringField("distroChannel", distroChannel)
+        gitFields()
 
         firebaseFields()
     }
@@ -156,6 +151,7 @@ buildConfig {
         stringField("sentryDsn", sentryDsn)
         stringField("overrideAniApiServer", overrideAniApiServer ?: "")
         stringField("distroChannel", distroChannel)
+        gitFields()
 
         booleanField("analyticsEnabled", enableFirebase)
     }
@@ -173,6 +169,7 @@ buildConfig {
             booleanField("sentryEnabled", sentryEnabled)
             stringField("overrideAniApiServer", overrideAniApiServer ?: "")
             stringField("distroChannel", distroChannel)
+            gitFields()
 
             firebaseFields()
         }

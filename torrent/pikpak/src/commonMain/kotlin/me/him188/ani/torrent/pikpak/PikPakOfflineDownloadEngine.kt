@@ -95,12 +95,6 @@ import kotlin.time.Instant
  * to signin-with-password if refresh fails; this lets us stop persisting the
  * plaintext password once we've bootstrapped a session.
  */
-data class PikPakCredentials(
-    val username: String,
-    val password: String,
-) {
-    val isValid: Boolean get() = username.isNotEmpty()
-}
 
 private data class PendingUnmatchedRematch(
     val providerFileId: String,
@@ -220,7 +214,7 @@ class PikPakOfflineDownloadEngine(
             _resolutionProgress.value = OfflineDownloadProgress.Authenticating
             client.login()
 
-            val sourceKey = sourceKeyFor(uri)
+            val sourceKey = librarySourceKeyFor(uri)
             _resolutionProgress.value = OfflineDownloadProgress.CheckingCloudCache
             val knownSharedRoot = libraryState.value.entries.firstOrNull {
                 it.sourceKey == sourceKey && it.sharedResource
@@ -351,17 +345,19 @@ class PikPakOfflineDownloadEngine(
                     // without queuing a task. Prefer the entry that appeared
                     // after the atomic probe; the newest-entry fallback covers
                     // providers that reuse an existing id while refreshing it.
-                    CreateUrlResult.InstantComplete -> {
+                    is CreateUrlResult.InstantComplete -> {
                         cloudCacheHit = true
                         logger.info {
                             "[pikpak] instant-complete for bucket=$sourceKey; recovering landed file from bucket listing"
                         }
-                        val landedEntries = client.listFiles(parentId = bucketId)
-                        val landed = selectInstantCompleteEntry(landedEntries, bucketEntryIdsBeforeProbe)
-                            ?: throw OfflineDownloadRejectedException(
-                                "PikPak reported instant-complete but bucket $sourceKey is empty after submission",
-                            )
-                        landed.id
+                        result.file?.id?.takeIf { it.isNotEmpty() } ?: run {
+                            val landedEntries = client.listFiles(parentId = bucketId)
+                            val landed = selectInstantCompleteEntry(landedEntries, bucketEntryIdsBeforeProbe)
+                                ?: throw OfflineDownloadRejectedException(
+                                    "PikPak reported instant-complete but bucket $sourceKey is empty after submission",
+                                )
+                            landed.id
+                        }
                     }
                 }
                 failureCleanupId = fileId
@@ -889,7 +885,7 @@ class PikPakOfflineDownloadEngine(
         val resourceRootId = if (shared) root.id else detail.id
         persistReadableFileMetadata(
             client,
-            sourceKeyFor(naming.cachedSource?.sourceUri ?: detail.id),
+            librarySourceKeyFor(naming.cachedSource?.sourceUri ?: detail.id),
             detail,
             naming,
             resourceRootId,
@@ -1251,7 +1247,7 @@ internal fun buildResolvedMedia(file: FileDetail): ResolvedMedia {
             "PikPak file has no playable link (file_id=${file.id})",
         )
 
-    val expiresAt: Instant? = file.links.octetStream.expire
+    val expiresAt: Instant? = file.octetStream.expire
         .takeIf { it.isNotEmpty() }
         ?.let { runCatching { Instant.parse(it) }.getOrNull() }
 
@@ -1286,7 +1282,7 @@ internal fun buildResolvedMedia(file: FileDetail): ResolvedMedia {
  * Exposed `internal` so commonTest can exercise these rules without spinning
  * up the engine.
  */
-internal fun sourceKeyFor(uri: String): String {
+internal fun librarySourceKeyFor(uri: String): String {
     val rawInfoHash = Regex("xt=urn:btih:([A-Za-z0-9]+)", RegexOption.IGNORE_CASE)
         .find(uri)?.groupValues?.get(1)
     val canonical = rawInfoHash?.let { canonicalizeBtih(it) }

@@ -45,6 +45,12 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.withContext
+import me.him188.ani.datasources.api.paging.SizedSource
 
 /**
  * @see MediaFetcher
@@ -723,6 +729,43 @@ class MediaFetcherTest {
         assertEquals(1, fetchCalled.get())
         res.results.first()
         assertEquals(1, fetchCalled.get())
+    }
+
+    @Test
+    fun `success publishes final replay before terminal state`() = runTest {
+        val session = createFetcher(createTestMediaSourceInstance(TestHttpMediaSource(fetch = {
+            SinglePagePagedSource {
+                TestMediaList.map { MediaMatch(it, MatchKind.EXACT) }.asFlow()
+            }
+        }))).newSession(request1)
+        val source = session.mediaSourceResults.single()
+        backgroundScope.launch { source.results.collect() }
+        withContext(UnconfinedTestDispatcher(testScheduler)) {
+            source.state.first { it is MediaSourceFetchState.Succeed }
+            assertEquals(TestMediaList, source.results.first())
+        }
+    }
+
+    @Test
+    fun `failure retains already published partial results`() = runTest {
+        val failAfterDelivery = CompletableDeferred<Unit>()
+        val session = createFetcher(createTestMediaSourceInstance(TestHttpMediaSource(fetch = {
+            object : SizedSource<MediaMatch> {
+                override val results = flow {
+                    TestMediaList.forEach { emit(MediaMatch(it, MatchKind.EXACT)) }
+                    failAfterDelivery.await()
+                    throw IllegalStateException("failed after emitting results")
+                }
+                override val finished = flowOf(false)
+                override val totalSize = flowOf<Int?>(null)
+            }
+        }))).newSession(request1)
+        val source = session.mediaSourceResults.single()
+        backgroundScope.launch { source.results.collect() }
+        assertEquals(TestMediaList, source.results.first { it.size == TestMediaList.size })
+        failAfterDelivery.complete(Unit)
+        source.state.first { it is MediaSourceFetchState.Failed }
+        assertEquals(TestMediaList, source.results.first())
     }
 
     @Test

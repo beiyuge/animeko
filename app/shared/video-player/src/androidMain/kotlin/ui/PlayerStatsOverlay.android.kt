@@ -21,6 +21,9 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
 import androidx.media3.exoplayer.upstream.BandwidthMeter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import org.openani.mediamp.MediampPlayer
 import org.openani.mediamp.features.PlaybackSpeed
 import java.lang.reflect.Field
@@ -90,14 +93,22 @@ private class ExoPlayerReflectionStats(private val exoPlayer: ExoPlayer) {
 @Composable
 actual fun rememberPlayerStatsState(player: MediampPlayer): State<PlayerStatsSnapshot?> {
     return produceState<PlayerStatsSnapshot?>(initialValue = null, player) {
-        val reflectionStats = (player.impl as? ExoPlayer)?.let { ExoPlayerReflectionStats(it) }
-        while (true) {
-            value = runCatching { player.readAndroidPlayerStats(reflectionStats) }
-                .getOrElse { player.readFallbackPlayerStats("ExoPlayer") }
-            delay(1.seconds)
-        }
+        androidPlayerStatsFlow(player).collect { value = it }
     }
 }
+
+/** Also usable by ViewModels; collection controls the lifetime of stats polling. */
+@OptIn(UnstableApi::class)
+fun androidPlayerStatsFlow(player: MediampPlayer): Flow<PlayerStatsSnapshot> = flow {
+    val reflectionStats = (player.impl as? ExoPlayer)?.let { ExoPlayerReflectionStats(it) }
+    while (true) {
+        emit(
+            runCatching { player.readAndroidPlayerStats(reflectionStats) }
+                .getOrElse { player.readFallbackPlayerStats("ExoPlayer") },
+        )
+        delay(1.seconds)
+    }
+}.flowOn(player.mainDispatcher)
 
 @OptIn(UnstableApi::class)
 private fun MediampPlayer.readAndroidPlayerStats(reflectionStats: ExoPlayerReflectionStats?): PlayerStatsSnapshot {
@@ -108,11 +119,11 @@ private fun MediampPlayer.readAndroidPlayerStats(reflectionStats: ExoPlayerRefle
     val videoSize = exoPlayer.videoSize
     val width = videoFormat?.width?.validMedia3Value() ?: videoSize.width.validMedia3Value()
     val height = videoFormat?.height?.validMedia3Value() ?: videoSize.height.validMedia3Value()
-    val properties = getCurrentMediaProperties()
+    val properties = mediaProperties.value
 
     return PlayerStatsSnapshot(
         backend = "ExoPlayer",
-        playbackState = playbackState.value.toString(),
+        playbackState = state.value.toString(),
         title = properties?.title,
         positionMillis = exoPlayer.currentPosition,
         durationMillis = properties?.durationMillis?.takeIf { it >= 0 }
@@ -160,12 +171,12 @@ private fun Format.readableBitrate(): Long? {
 private fun Int.validMedia3Value(): Int? = takeIf { it != Format.NO_VALUE && it > 0 }
 
 private fun MediampPlayer.readFallbackPlayerStats(backend: String): PlayerStatsSnapshot {
-    val properties = getCurrentMediaProperties()
+    val properties = mediaProperties.value
     return PlayerStatsSnapshot(
         backend = backend,
-        playbackState = playbackState.value.toString(),
+        playbackState = state.value.toString(),
         title = properties?.title,
-        positionMillis = getCurrentPositionMillis(),
+        positionMillis = currentPositionMillis.value,
         durationMillis = properties?.durationMillis?.takeIf { it >= 0 },
         playbackSpeed = features[PlaybackSpeed]?.value,
         resolution = null,

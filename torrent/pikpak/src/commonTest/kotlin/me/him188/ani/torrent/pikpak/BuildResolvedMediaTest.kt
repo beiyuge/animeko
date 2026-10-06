@@ -41,8 +41,8 @@ class BuildResolvedMediaTest {
         size = size,
         mimeType = mimeType,
         webContentLink = webContentLink,
-        links = FileDetail.Links(
-            octetStream = DownloadLink(
+        links = mapOf(
+            FileDetail.OCTET_STREAM to DownloadLink(
                 url = octetStreamUrl,
                 expire = octetStreamExpire,
             ),
