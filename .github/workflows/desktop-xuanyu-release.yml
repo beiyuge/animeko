@@ -2,6 +2,8 @@ name: Desktop Xuanyu Release
 
 on:
   push:
+    branches:
+      - 'publish-xuanyu/*'
     tags:
       - '*.*.*.xuanyu'
       - '*.*.*.xuanyu.*'
@@ -88,7 +90,12 @@ jobs:
           set -euo pipefail
           VERSION_NAME="$(sed -n 's/^version.name=//p' gradle.properties)"
           test -n "$VERSION_NAME"
-          test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
+          if [ "$GITHUB_REF_TYPE" = 'tag' ]; then
+            test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
+          else
+            test "${GITHUB_REF_NAME}" = "publish-xuanyu/$VERSION_NAME"
+          fi
+          echo "RELEASE_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
 
       - name: Test playback video format and UI
         if: matrix.platform == 'linux'
@@ -154,7 +161,7 @@ jobs:
           set -euo pipefail
           DEB="$(find app/desktop/build/compose/binaries/main-release/deb -type f -name '*.deb' -print -quit)"
           test -n "$DEB"
-          cp "$DEB" "ci-helper/build/distribution/ani-${GITHUB_REF_NAME}-linux-x86_64.deb"
+          cp "$DEB" "ci-helper/build/distribution/ani-${RELEASE_VERSION}-linux-x86_64.deb"
 
       - name: Verify and checksum desktop packages
         shell: bash
@@ -176,14 +183,15 @@ jobs:
       - name: Upload desktop build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ani-${{ github.ref_name }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: ani-${{ env.RELEASE_VERSION }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ci-helper/build/distribution/*
           if-no-files-found: error
 
       - name: Publish desktop assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
           files: ci-helper/build/distribution/*
           fail_on_unmatched_files: true
           draft: false

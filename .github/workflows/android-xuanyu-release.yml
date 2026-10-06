@@ -2,6 +2,8 @@ name: Android Xuanyu Release
 
 on:
   push:
+    branches:
+      - 'publish-xuanyu/*'
     tags:
       - '*.*.*.xuanyu'
       - '*.*.*.xuanyu.*'
@@ -65,7 +67,12 @@ jobs:
           VERSION_NAME="$(sed -n 's/^version.name=//p' gradle.properties)"
           test -n "$VERSION_NAME"
           grep -Fx 'android.application.id.suffix=.xuanyu' gradle.properties
-          test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
+          if [ "$GITHUB_REF_TYPE" = 'tag' ]; then
+            test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
+          else
+            test "${GITHUB_REF_NAME}" = "publish-xuanyu/$VERSION_NAME"
+          fi
+          echo "RELEASE_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
 
       - name: Test playback video format and analyze host lint
         run: >-
@@ -116,31 +123,32 @@ jobs:
 
           BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$UNIVERSAL")"
           grep -F "package: name='me.him188.ani.xuanyu'" <<< "$BADGING"
-          grep -F "versionName='${GITHUB_REF_NAME}'" <<< "$BADGING"
+          grep -F "versionName='${RELEASE_VERSION}'" <<< "$BADGING"
 
           for apk in "$OUTPUT_DIR"/android-default-*-release.apk; do
             "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$apk"
           done
 
           mkdir -p "$RELEASE_DIR"
-          cp "$OUTPUT_DIR/android-default-arm64-v8a-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-arm64-v8a.apk"
-          cp "$OUTPUT_DIR/android-default-x86_64-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-x86_64.apk"
-          cp "$OUTPUT_DIR/android-default-armeabi-v7a-release.apk" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-armeabi-v7a.apk"
-          cp "$UNIVERSAL" "$RELEASE_DIR/ani-${GITHUB_REF_NAME}-universal.apk"
+          cp "$OUTPUT_DIR/android-default-arm64-v8a-release.apk" "$RELEASE_DIR/ani-${RELEASE_VERSION}-arm64-v8a.apk"
+          cp "$OUTPUT_DIR/android-default-x86_64-release.apk" "$RELEASE_DIR/ani-${RELEASE_VERSION}-x86_64.apk"
+          cp "$OUTPUT_DIR/android-default-armeabi-v7a-release.apk" "$RELEASE_DIR/ani-${RELEASE_VERSION}-armeabi-v7a.apk"
+          cp "$UNIVERSAL" "$RELEASE_DIR/ani-${RELEASE_VERSION}-universal.apk"
           sha256sum "$RELEASE_DIR"/*.apk > "$RELEASE_DIR/SHA256SUMS"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ani-${{ github.ref_name }}-android-release
+          name: ani-${{ env.RELEASE_VERSION }}-android-release
           path: release/*
           if-no-files-found: error
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Animeko ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: Animeko ${{ env.RELEASE_VERSION }}
           body: |
             Animeko xuanyu 定制版。
 
@@ -149,7 +157,7 @@ jobs:
             - 加载、切源、停止或无视频时清除标识，支持自适应轨道变化，并避让播放器按钮与系统安全区域。
             - 保留 PikPak 云盘库、播放缓存复用、系统媒体控制及定制版更新通道。
 
-            - 版本：${{ github.ref_name }}
+            - 版本：${{ env.RELEASE_VERSION }}
             - 包名：me.him188.ani.xuanyu
             - APK 已由 GitHub Actions 使用 xyla 发布证书签名并校验。
             - `universal` 适用于大多数设备，其余文件按 CPU 架构选择。
