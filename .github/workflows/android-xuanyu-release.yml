@@ -67,6 +67,13 @@ jobs:
           grep -Fx 'android.application.id.suffix=.xuanyu' gradle.properties
           test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
 
+      - name: Test playback video format and analyze host lint
+        run: >-
+          ./gradlew :app:shared:video-player:testAndroidHostTest
+          :app:shared:video-player:lintAnalyzeAndroidHostTest
+          --stacktrace
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
       - name: Prepare signing key
         id: signing
         env:
@@ -135,7 +142,12 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Animeko ${{ github.ref_name }}
           body: |
-            Animeko xuanyu 定制版（Android 安装包）。
+            Animeko xuanyu 定制版。
+
+            - 播放时右上角持续显示当前视频轨道的分辨率，例如 480p、1080p、4K。
+            - Android 和桌面端仅在实际播放元数据确认为 PQ/HLG 时显示 HDR；4K 不代表 HDR。
+            - 加载、切源、停止或无视频时清除标识，支持自适应轨道变化，并避让播放器按钮与系统安全区域。
+            - 保留 PikPak 云盘库、播放缓存复用、系统媒体控制及定制版更新通道。
 
             - 版本：${{ github.ref_name }}
             - 包名：me.him188.ani.xuanyu

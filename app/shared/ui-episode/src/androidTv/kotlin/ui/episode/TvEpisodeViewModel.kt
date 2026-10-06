@@ -60,6 +60,7 @@ import me.him188.ani.app.platform.ContextMP
 import me.him188.ani.app.ui.danmaku.UIDanmakuEvent
 import me.him188.ani.app.ui.subject.episode.EpisodeViewModel
 import me.him188.ani.app.videoplayer.ui.androidPlayerStatsFlow
+import me.him188.ani.app.videoplayer.ui.playbackVideoFormatFlow
 import me.him188.ani.app.videoplayer.ui.progress.createMediaProgressFramePreviewState
 import me.him188.ani.app.videoplayer.ui.progress.subtitleLanguage
 import me.him188.ani.danmaku.api.provider.MatchingDanmakuProvider
@@ -749,6 +750,11 @@ class TvEpisodeViewModel(
                 .collectLatest { visible ->
                     if (visible) androidPlayerStatsFlow(player).collect { stats -> playerOptions.update { it.copy(stats = stats) } }
                 }
+        }
+        backgroundScope.launch {
+            playbackVideoFormatFlow(player).collect { format ->
+                playerOptions.update { it.copy(videoFormat = format) }
+            }
         }
         observePreview()
         observeAutoSkip()

@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContent
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -98,6 +99,7 @@ val LocalVideoScaffoldSheetWindowInsets = compositionLocalOf<WindowInsets> { Win
  * @param leftBottomTips 左下角的提示, 例如跳过 OP/ED 的提示气泡. 框架把它停在左下角、底部控制栏之上, 控制栏显隐时平滑跟随.
  * @param screenshotOverlay 覆盖整个播放器区域的截图反馈层 (闪光、截图预览面板), 位于控制器之上、[rhsSheet] 之下.
  * 参数是底部控制栏当前占用的高度 (不含系统栏边距, 隐藏时为 0), 面板据此避让.
+ * @param topEndOverlay 常驻右上播放信息, 避开顶部及右侧控制器和安全边距.
  * @param expanded 当前是否处于全屏模式. 全屏时此框架会 [Modifier.fillMaxSize], 否则会限制为一个 16:9 的框.
  * @param videoOnly 只组合 [video], 其他各层都不组合, 用于画中画小窗.
  * 切换它不会重建 [video]: 播放器节点被重建会销毁视频输出.
@@ -129,10 +131,22 @@ fun VideoScaffold(
     centerOverlay: @Composable BoxScope.() -> Unit = {},
     framePreviewOverlay: @Composable BoxScope.() -> Unit = {},
     playerStatsOverlay: @Composable BoxScope.() -> Unit = {},
+    topEndOverlay: @Composable () -> Unit = {},
     screenshotOverlay: @Composable BoxScope.(bottomControllerHeight: Dp) -> Unit = {},
 ) {
     val inlineSliderOnly = controllerState.visibility == ControllerVisibility.InlineSliderOnly
     var bottomControllerHeightPx by remember { mutableIntStateOf(0) }
+    var topControllerHeightPx by remember { mutableIntStateOf(0) }
+    var rhsControlsWidthPx by remember { mutableIntStateOf(0) }
+    val rhsControlsInset = with(LocalDensity.current) {
+        val width = rhsControlsWidthPx.toDp()
+        if (width > 0.dp) width + 16.dp else 0.dp
+    }
+    val topOverlayInsets = contentWindowInsets.union(WindowInsets.desktopTitleBar)
+        .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
+    val topControllerHeight = with(LocalDensity.current) {
+        (topControllerHeightPx - topOverlayInsets.getTop(this)).coerceAtLeast(0).toDp()
+    }
     val controllerVisibility = controllerState.visibility
         .withGestureLocked(gestureLocked)
         .withExpanded(expanded)
@@ -198,63 +212,66 @@ fun VideoScaffold(
             Box(Modifier) {
                 Column(Modifier.fillMaxSize().background(Color.Transparent)) {
                     // 顶部控制栏: 返回键, 标题, 设置
-                    me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility(
-                        visible = controllerVisibility.topBar || inlineSliderOnly,
-                        enter = enterTransition,
-                        exit = exitTransition,
-                    ) {
-                        Box {
-                            Box(
-                                Modifier
-                                    .matchParentSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            0f to Color.Transparent.copy(0.72f),
-                                            0.32f to Color.Transparent.copy(0.45f),
-                                            1f to Color.Transparent,
+                    Column(Modifier.onSizeChanged { topControllerHeightPx = it.height }) {
+                        me.him188.ani.app.ui.foundation.animation.AniAnimatedVisibility(
+                            visible = controllerVisibility.topBar || inlineSliderOnly,
+                            enter = enterTransition,
+                            exit = exitTransition,
+                        ) {
+                            Box {
+                                Box(
+                                    Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                0f to Color.Transparent.copy(0.72f),
+                                                0.32f to Color.Transparent.copy(0.45f),
+                                                1f to Color.Transparent,
+                                            ),
                                         ),
-                                    ),
-                            )
-                            val alwaysOnRequester = rememberAlwaysOnRequester(controllerState, "topBar")
-
-                            Column(
-                                Modifier
-                                    .keepLayoutWhenHidden(inlineSliderOnly)
-                                    .hoverToRequestAlwaysOn(alwaysOnRequester)
-                                    .fillMaxWidth(),
-                            ) {
-                                //force skip layout hit test for windows
-                                val desktopTitleBarInsets = WindowInsets.desktopTitleBar.only(WindowInsetsSides.Top)
-                                Spacer(
-                                    modifier = Modifier.fillMaxWidth()
-                                        .pointerInput(Unit) {}
-                                        .windowInsetsPadding(desktopTitleBarInsets),
                                 )
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .consumeWindowInsets(desktopTitleBarInsets)
-                                        .windowInsetsPadding(contentWindowInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                val alwaysOnRequester = rememberAlwaysOnRequester(controllerState, "topBar")
+
+                                Column(
+                                    Modifier
+                                        .keepLayoutWhenHidden(inlineSliderOnly)
+                                        .hoverToRequestAlwaysOn(alwaysOnRequester)
+                                        .fillMaxWidth(),
+                                ) {
+                                    //force skip layout hit test for windows
+                                    val desktopTitleBarInsets = WindowInsets.desktopTitleBar.only(WindowInsetsSides.Top)
+                                    Spacer(
+                                        modifier = Modifier.fillMaxWidth()
+                                            .pointerInput(Unit) {}
+                                            .windowInsetsPadding(desktopTitleBarInsets),
+                                    )
+                                    Row(
+                                        Modifier.fillMaxWidth()
+                                            .consumeWindowInsets(desktopTitleBarInsets)
+                                            .windowInsetsPadding(contentWindowInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+                                            topBar()
+                                        }
+                                    }
+                                    Spacer(Modifier.height(16.dp))
+                                }
+
+                                Box(
+                                    Modifier.matchParentSize()
+                                        .keepLayoutWhenHidden(inlineSliderOnly)
+                                        .windowInsetsPadding(contentWindowInsets.only(WindowInsetsSides.Top))
+                                        .padding(top = 8.dp),
+                                    contentAlignment = Alignment.TopCenter,
                                 ) {
                                     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-                                        topBar()
+                                        centerOverlay()
                                     }
-                                }
-                                Spacer(Modifier.height(16.dp))
-                            }
-
-                            Box(
-                                Modifier.matchParentSize()
-                                    .keepLayoutWhenHidden(inlineSliderOnly)
-                                    .windowInsetsPadding(contentWindowInsets.only(WindowInsetsSides.Top))
-                                    .padding(top = 8.dp),
-                                contentAlignment = Alignment.TopCenter,
-                            ) {
-                                CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-                                    centerOverlay()
                                 }
                             }
                         }
+
                     }
 
                     Box(Modifier.weight(1f, fill = true).fillMaxWidth())
@@ -344,7 +361,8 @@ fun VideoScaffold(
             ) {
                 Box(Modifier.weight(1f, fill = true).fillMaxWidth()) {
                     Column(
-                        Modifier.padding(end = 16.dp).align(Alignment.CenterEnd),
+                        Modifier.padding(end = 16.dp).align(Alignment.CenterEnd)
+                            .onSizeChanged { rhsControlsWidthPx = it.width },
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         AniAnimatedVisibility(
@@ -365,6 +383,17 @@ fun VideoScaffold(
                         }
                     }
                 }
+            }
+
+            // 右上播放信息避开完整顶部控制栏, 包括淡出期间和桌面标题栏.
+            Box(
+                Modifier.matchParentSize()
+                    .windowInsetsPadding(topOverlayInsets)
+                    .padding(top = topControllerHeight, end = rhsControlsInset)
+                    .padding(12.dp),
+                contentAlignment = Alignment.TopEnd,
+            ) {
+                topEndOverlay()
             }
 
             // 左下提示: 贴着左下角, 抬到底部控制栏之上, 控制栏显隐时平滑跟随

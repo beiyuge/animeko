@@ -29,6 +29,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.onAllNodesWithText
@@ -70,8 +71,11 @@ import me.him188.ani.app.ui.lang.watch_together_state_buffering
 import me.him188.ani.app.ui.watchtogether.WatchTogetherMemberPresence
 import me.him188.ani.app.ui.watchtogether.WatchTogetherMemberPresentation
 import me.him188.ani.app.ui.watchtogether.WatchTogetherPlaybackPresentation
+import me.him188.ani.app.videoplayer.ui.PlaybackVideoFormat
+import me.him188.ani.app.videoplayer.ui.VideoDynamicRange
 import me.him188.ani.app.videoplayer.ui.progress.MediaProgressFramePreviewState
 import me.him188.ani.tv.ui.episode.playback.TvPlaybackInteractionState
+import me.him188.ani.tv.ui.episode.playback.TvSkipPrompt
 import me.him188.ani.tv.ui.episode.presentation.TvPlaybackSnapshot
 import me.him188.ani.tv.ui.episode.presentation.TvPlayerAction
 import me.him188.ani.tv.ui.episode.presentation.TvPlayerDialog
@@ -305,6 +309,46 @@ class TvPlaybackSemanticsUiTest {
         onNodeWithTag("tv-player-seekbar").assertIsDisplayed()
         mainClock.advanceTimeBy(3_000)
         onNodeWithTag("tv-player-seekbar").assertDoesNotExist()
+    }
+
+    @Test
+    fun videoFormatRemainsVisibleWithoutControlsAndClearsOnSourceLoadingAndNoVideo() = runAniComposeUiTest {
+        var state by mutableStateOf(TvEpisodeUiState(
+            playerState = PlayerState(MediaStatus.Ready, true, false),
+            loadingState = VideoLoadingState.Succeed(null),
+            options = TvPlayerOptionsState(
+                videoFormat = PlaybackVideoFormat(3840, 2160, VideoDynamicRange.Hdr),
+                skipPrompt = TvSkipPrompt("片头", 5),
+            ),
+        ))
+        showPlayer { state }
+        onNodeWithText("4K HDR").assertIsDisplayed()
+        val badge = onNodeWithTag("playback-video-format").getBoundsInRoot()
+        val popup = onNodeWithTag("tv-auto-skip-popup").getBoundsInRoot()
+        assertTrue(badge.bottom < popup.top)
+        mainClock.autoAdvance = false
+        mainClock.advanceTimeBy(6_000)
+        onNodeWithTag("tv-player-seekbar").assertDoesNotExist()
+        onNodeWithText("4K HDR").assertIsDisplayed()
+        runOnIdle { state = state.copy(loadingState = VideoLoadingState.ResolvingSource) }
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        runOnIdle {
+            state = state.copy(
+                loadingState = VideoLoadingState.Succeed(null),
+                options = state.options.copy(videoFormat = PlaybackVideoFormat(854, 480)),
+            )
+        }
+        onNodeWithText("480p").assertIsDisplayed()
+        onNodeWithText("4K HDR").assertDoesNotExist()
+        runOnIdle { state = state.copy(playerState = PlayerState.Initial) }
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        runOnIdle {
+            state = state.copy(
+                playerState = PlayerState(MediaStatus.Ready, true, false),
+                options = state.options.copy(videoFormat = null),
+            )
+        }
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
     }
 
     @Test

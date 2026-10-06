@@ -90,6 +90,15 @@ jobs:
           test -n "$VERSION_NAME"
           test "${GITHUB_REF_NAME}" = "$VERSION_NAME"
 
+      - name: Test playback video format and UI
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: >-
+          ./gradlew :app:shared:video-player:desktopTest
+          --no-configuration-cache
+          --stacktrace
+          '-Dorg.gradle.jvmargs=-Xmx8g -Dkotlin.daemon.jvm.options=-Xmx6g'
+
       - name: Test PikPak playback status UI
         if: matrix.platform == 'windows'
         shell: bash

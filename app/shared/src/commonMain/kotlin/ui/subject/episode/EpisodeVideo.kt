@@ -167,9 +167,11 @@ import me.him188.ani.app.videoplayer.ui.progress.SubtitleSwitcher
 import me.him188.ani.app.videoplayer.ui.progress.TouchSeekState
 import me.him188.ani.app.videoplayer.ui.progress.rememberMediaProgressSliderState
 import me.him188.ani.app.videoplayer.ui.rememberAlwaysOnRequester
+import me.him188.ani.app.videoplayer.ui.rememberPlaybackVideoFormat
 import me.him188.ani.app.videoplayer.ui.rememberPlayerStatsState
 import me.him188.ani.app.videoplayer.ui.rememberVideoControllerState
 import me.him188.ani.app.videoplayer.ui.rememberVideoSideSheetsController
+import me.him188.ani.app.videoplayer.ui.top.PlaybackVideoFormatBadge
 import me.him188.ani.app.videoplayer.ui.top.PlayerTopBar
 import me.him188.ani.app.videoplayer.ui.top.SystemTime
 import me.him188.ani.app.videoplayer.videoenhancement.VideoEnhancementController
@@ -263,6 +265,8 @@ internal fun EpisodeVideoImpl(
     var isLocked by remember(expanded) { mutableStateOf(false) }
     var showPlayerStats by remember { mutableStateOf(false) }
     val playerStats by rememberPlayerStatsState(playerState)
+    val videoFormat by rememberPlaybackVideoFormat(playerState)
+    val videoLoadingState by videoLoadingStateFlow.collectAsStateWithLifecycle(VideoLoadingState.Initial)
     val sheetsController = rememberVideoSideSheetsController<EpisodeVideoSideSheetPage>()
     val anySideSheetVisible by sheetsController.hasPageAsState()
     val previewModeText = stringResource(Lang.subject_episode_preview_mode)
@@ -340,6 +344,9 @@ internal fun EpisodeVideoImpl(
                         windowInsets = WindowInsets(0.dp),
                     )
                 }
+            },
+            topEndOverlay = {
+                PlaybackVideoFormatBadge(videoFormat.takeIf { videoLoadingState is VideoLoadingState.Succeed })
             },
             centerOverlay = if (expanded && LocalPlatform.current.isMobile()) {
                 { SystemTime() }
@@ -430,7 +437,6 @@ internal fun EpisodeVideoImpl(
             },
             floatingMessage = {
                 Column {
-                    val videoLoadingState by videoLoadingStateFlow.collectAsStateWithLifecycle(VideoLoadingState.Initial)
                     EpisodeVideoLoadingIndicator(
                         playerState,
                         videoLoadingState,

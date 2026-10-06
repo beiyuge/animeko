@@ -22,10 +22,15 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -53,6 +58,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -93,6 +99,7 @@ import me.him188.ani.app.ui.subject.episode.video.loading.EpisodeVideoLoadingInd
 import me.him188.ani.app.ui.subject.episode.video.loading.shouldShowVideoLoadingIndicator
 import me.him188.ani.app.videoplayer.ui.PlayerStatsOverlay
 import me.him188.ani.app.videoplayer.ui.renderAspectRatioMode
+import me.him188.ani.app.videoplayer.ui.top.PlaybackVideoFormatBadge
 import me.him188.ani.danmaku.ui.DanmakuPresentation
 import me.him188.ani.datasources.api.topic.FileSize
 import me.him188.ani.tv.ui.episode.comments.TvCommentDetail
@@ -185,6 +192,17 @@ internal fun TvEpisodeScreen(
     val state by presentationState.states.collectAsState()
     val onAction = presentationState::onAction
     val loadingState = uiState.loadingState
+    val videoFormat = uiState.options.videoFormat.takeIf {
+        loadingState is VideoLoadingState.Succeed && uiState.playerState.mediaStatus == MediaStatus.Ready
+    }
+    val formatBadgeTop = with(LocalDensity.current) {
+        40.dp + MaterialTheme.typography.titleMedium.lineHeight.toDp()
+    }
+    val skipPopupTop = with(LocalDensity.current) {
+        if (videoFormat == null) 100.dp else maxOf(
+            100.dp, formatBadgeTop + MaterialTheme.typography.labelMedium.lineHeight.toDp() + 20.dp,
+        )
+    }
     val title = uiState.title
     val cacheProgress = uiState.cacheProgress
     val playbackSpeed = uiState.playbackSpeed
@@ -562,6 +580,12 @@ internal fun TvEpisodeScreen(
             }
         },
         indicator = {
+            PlaybackVideoFormatBadge(
+                videoFormat,
+                Modifier.align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
+                    .padding(end = 48.dp, top = formatBadgeTop),
+            )
             // 按住倍速指示
             if (state.speedHolding) {
                 PlayerCenterCapsule(
@@ -708,7 +732,8 @@ internal fun TvEpisodeScreen(
                     ),
                     Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 100.dp, end = 48.dp)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
+                        .padding(top = skipPopupTop, end = 48.dp)
                         .testTag("tv-auto-skip-popup"),
                 )
             }

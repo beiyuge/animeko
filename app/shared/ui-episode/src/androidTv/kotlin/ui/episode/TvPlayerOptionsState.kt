@@ -11,6 +11,7 @@ package me.him188.ani.tv.ui.episode
 
 import androidx.compose.ui.graphics.ImageBitmap
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
+import me.him188.ani.app.videoplayer.ui.PlaybackVideoFormat
 import me.him188.ani.app.videoplayer.ui.PlayerStatsSnapshot
 import me.him188.ani.app.videoplayer.videoenhancement.VideoEnhancementMode
 import me.him188.ani.danmaku.ui.DanmakuConfig
@@ -32,6 +33,7 @@ data class TvPlayerOptionsState(
     val supportsSubtitles: Boolean = false,
     val enhancementMode: VideoEnhancementMode? = null,
     val stats: PlayerStatsSnapshot? = null,
+    val videoFormat: PlaybackVideoFormat? = null,
     val preview: ImageBitmap? = null,
     val previewAvailable: Boolean = false,
     val previewLoading: Boolean = false,
