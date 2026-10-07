@@ -1,8 +1,11 @@
 # 播放分辨率标识
 
-播放器右上角的 `PlaybackVideoFormatBadge` 默认显示当前视频规格, 控制栏隐藏时保留.
+播放器右上角的 `PlaybackVideoFormatBadge` 随控制栏显示和隐藏.
 普通播放页通过 `VideoScaffold.topEndOverlay` 接入, 避开顶部控制栏、右侧按钮、系统安全区域及桌面标题栏;
 画中画只渲染视频. TV 通过状态覆盖层接入, 位于时钟下方、自动跳过提示上方, 随侧边栏收缩后的主区域对齐.
+普通播放复用最终 `ControllerVisibility.topBar` 及顶部控制栏的淡入淡出动画;
+仅显示进度条或锁定手势时隐藏标识. TV 复用 `controlsVisible` 及标题栏的淡入淡出动画.
+标识不请求控制栏常显, 不添加独立隐藏计时器. 控制栏隐藏期间继续更新当前格式, 重新显示时呈现最新数据.
 
 `PlaybackVideoFormat` 表示输入视频的尺寸和动态范围. `playbackVideoFormatFlow` 仅在当前媒体
 `MediaStatus.Ready` 时观察格式, 暂停和缓冲保留格式; 切源、加载、停止、结束、错误和释放清空.

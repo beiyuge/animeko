@@ -99,7 +99,7 @@ val LocalVideoScaffoldSheetWindowInsets = compositionLocalOf<WindowInsets> { Win
  * @param leftBottomTips 左下角的提示, 例如跳过 OP/ED 的提示气泡. 框架把它停在左下角、底部控制栏之上, 控制栏显隐时平滑跟随.
  * @param screenshotOverlay 覆盖整个播放器区域的截图反馈层 (闪光、截图预览面板), 位于控制器之上、[rhsSheet] 之下.
  * 参数是底部控制栏当前占用的高度 (不含系统栏边距, 隐藏时为 0), 面板据此避让.
- * @param topEndOverlay 常驻右上播放信息, 避开顶部及右侧控制器和安全边距.
+ * @param topEndOverlay 随顶部控制栏显隐的右上播放信息, 避开顶部及右侧控制器和安全边距.
  * @param expanded 当前是否处于全屏模式. 全屏时此框架会 [Modifier.fillMaxSize], 否则会限制为一个 16:9 的框.
  * @param videoOnly 只组合 [video], 其他各层都不组合, 用于画中画小窗.
  * 切换它不会重建 [video]: 播放器节点被重建会销毁视频输出.
@@ -393,7 +393,13 @@ fun VideoScaffold(
                     .padding(12.dp),
                 contentAlignment = Alignment.TopEnd,
             ) {
-                topEndOverlay()
+                AniAnimatedVisibility(
+                    visible = controllerVisibility.topBar,
+                    enter = enterTransition,
+                    exit = exitTransition,
+                ) {
+                    topEndOverlay()
+                }
             }
 
             // 左下提示: 贴着左下角, 抬到底部控制栏之上, 控制栏显隐时平滑跟随

@@ -312,7 +312,7 @@ class TvPlaybackSemanticsUiTest {
     }
 
     @Test
-    fun videoFormatRemainsVisibleWithoutControlsAndClearsOnSourceLoadingAndNoVideo() = runAniComposeUiTest {
+    fun videoFormatFollowsControlAutoHideAndRestoresLatestFormatAndClearsOnSourceLoadingAndNoVideo() = runAniComposeUiTest {
         var state by mutableStateOf(TvEpisodeUiState(
             playerState = PlayerState(MediaStatus.Ready, true, false),
             loadingState = VideoLoadingState.Succeed(null),
@@ -329,7 +329,14 @@ class TvPlaybackSemanticsUiTest {
         mainClock.autoAdvance = false
         mainClock.advanceTimeBy(6_000)
         onNodeWithTag("tv-player-seekbar").assertDoesNotExist()
-        onNodeWithText("4K HDR").assertIsDisplayed()
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        runOnIdle { state = state.copy(options = state.options.copy(videoFormat = PlaybackVideoFormat(854, 480))) }
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        key(Key.DirectionUp)
+        mainClock.advanceTimeBy(500)
+        onNodeWithTag("tv-player-seekbar").assertIsDisplayed()
+        onNodeWithText("480p").assertIsDisplayed()
+        onNodeWithText("4K HDR").assertDoesNotExist()
         runOnIdle { state = state.copy(loadingState = VideoLoadingState.ResolvingSource) }
         onNodeWithTag("playback-video-format").assertDoesNotExist()
         runOnIdle {

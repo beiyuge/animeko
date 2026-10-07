@@ -48,7 +48,7 @@ import kotlin.test.assertTrue
 
 class PlaybackVideoFormatBadgeTest {
     @Test
-    fun `badge avoids visible top controls and safe insets remains visible when hidden and is absent in PiP`() {
+    fun `badge follows control transitions avoids buttons and safe insets and is absent in PiP`() {
         for (width in listOf(360, 960)) runAniComposeUiTest {
             val controls = PlayerControllerState(ControllerVisibility.Visible)
             val format = mutableStateOf<PlaybackVideoFormat?>(PlaybackVideoFormat(3840, 2160, VideoDynamicRange.Hdr))
@@ -106,15 +106,24 @@ class PlaybackVideoFormatBadgeTest {
             assertEquals(1, screenshotClicks)
             saveEvidence("$width-controls-visible")
 
-            controls.toggleFullVisible(false)
-            waitForIdle()
-            onNodeWithTag("controls").assertDoesNotExist()
+            mainClock.autoAdvance = false
+            runOnIdle { controls.toggleFullVisible(false) }
+            mainClock.advanceTimeBy(50)
+            onNodeWithTag("controls").assertExists()
             onNodeWithText("4K HDR").assertExists()
-            val hiddenBadge = onNodeWithTag("playback-video-format").getBoundsInRoot()
-            assertEquals((player.top + 24.dp + 12.dp).value, hiddenBadge.top.value, 0.5f)
+            saveEvidence("$width-controls-hiding")
+            mainClock.advanceTimeBy(500)
+            onNodeWithTag("controls").assertDoesNotExist()
+            onNodeWithTag("playback-video-format").assertDoesNotExist()
             saveEvidence("$width-controls-hidden")
 
-            format.value = PlaybackVideoFormat(854, 480)
+            runOnIdle { format.value = PlaybackVideoFormat(854, 480) }
+            onNodeWithTag("playback-video-format").assertDoesNotExist()
+            runOnIdle { controls.toggleFullVisible(true) }
+            mainClock.advanceTimeBy(50)
+            onNodeWithTag("controls").assertExists()
+            onNodeWithText("480p").assertExists()
+            mainClock.autoAdvance = true
             waitForIdle()
             onNodeWithText("480p").assertExists()
             onNodeWithText("4K HDR").assertDoesNotExist()
@@ -127,6 +136,51 @@ class PlaybackVideoFormatBadgeTest {
             onNodeWithTag("playback-video-format").assertDoesNotExist()
             onNodeWithTag("video").assertExists()
         }
+    }
+
+    @Test
+    fun `badge honors initial hidden locked progress only and always on control states`() = runAniComposeUiTest {
+        val controls = PlayerControllerState(ControllerVisibility.Invisible)
+        val locked = mutableStateOf(false)
+        setContent {
+            ProvideCompositionLocalsForPreview {
+                VideoScaffold(
+                    expanded = true,
+                    modifier = Modifier.size(360.dp, 300.dp),
+                    controllerState = controls,
+                    gestureLocked = locked.value,
+                    topBar = { Text("Controls", Modifier.testTag("controls")) },
+                    topEndOverlay = { PlaybackVideoFormatBadge(PlaybackVideoFormat(1920, 1080)) },
+                )
+            }
+        }
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        val requester = Any()
+        controls.setRequestProgressBar(requester)
+        waitForIdle()
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        controls.cancelRequestProgressBarVisible(requester)
+        controls.setRequestAlwaysOn(requester, true)
+        waitForIdle()
+        onNodeWithTag("controls").assertExists()
+        onNodeWithText("1080p").assertExists()
+        locked.value = true
+        waitForIdle()
+        onNodeWithTag("controls").assertDoesNotExist()
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        locked.value = false
+        waitForIdle()
+        onNodeWithText("1080p").assertExists()
+        controls.setRequestInlineProgressSlider(requester)
+        waitForIdle()
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
+        controls.cancelRequestInlineProgressSlider(requester)
+        waitForIdle()
+        onNodeWithText("1080p").assertExists()
+        controls.setRequestAlwaysOn(requester, false)
+        waitForIdle()
+        onNodeWithTag("controls").assertDoesNotExist()
+        onNodeWithTag("playback-video-format").assertDoesNotExist()
     }
 
     private fun ComposeUiTest.saveEvidence(name: String) {

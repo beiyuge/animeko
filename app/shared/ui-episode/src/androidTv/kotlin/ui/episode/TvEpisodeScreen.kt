@@ -580,12 +580,16 @@ internal fun TvEpisodeScreen(
             }
         },
         indicator = {
-            PlaybackVideoFormatBadge(
-                videoFormat,
-                Modifier.align(Alignment.TopEnd)
+            AnimatedVisibility(
+                visible = state.controlsVisible,
+                modifier = Modifier.align(Alignment.TopEnd)
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
                     .padding(end = 48.dp, top = formatBadgeTop),
-            )
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                PlaybackVideoFormatBadge(videoFormat)
+            }
             // 按住倍速指示
             if (state.speedHolding) {
                 PlayerCenterCapsule(
